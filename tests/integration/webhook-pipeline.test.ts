@@ -61,20 +61,47 @@ describe('Webhook Pipeline, Deduplication, Queue & DLQ Integration Tests', () =>
     const providerRef = initRes.body.provider_payment_ref;
 
     // 2. Ingest payment.captured webhook for this payment
+    const selectedGateway = initRes.body.selected_gateway;
     const eventId = `evt_cap_${Date.now()}`;
-    const payload = JSON.stringify({
-      id: eventId,
-      event: 'payment.captured',
-      payload: { payment: { entity: { id: providerRef, status: 'captured' } } }
-    });
-    const rawBody = Buffer.from(payload, 'utf8');
-    const signature = crypto.createHmac('sha256', config.RAZORPAY_WEBHOOK_SECRET).update(rawBody).digest('hex');
+    let rawBody: Buffer;
+    let headers: Record<string, string>;
 
-    await WebhookService.ingestWebhook('razorpay', rawBody, { 'x-razorpay-signature': signature });
+    if (selectedGateway === 'stripe') {
+      const payload = JSON.stringify({
+        id: eventId,
+        type: 'payment_intent.succeeded',
+        data: { object: { id: providerRef, status: 'succeeded', amount: 35000 } }
+      });
+      rawBody = Buffer.from(payload, 'utf8');
+      const now = Math.floor(Date.now() / 1000);
+      const sig = crypto.createHmac('sha256', config.STRIPE_WEBHOOK_SECRET).update(`${now}.${payload}`).digest('hex');
+      headers = { 'stripe-signature': `t=${now},v1=${sig}` };
+    } else if (selectedGateway === 'payu') {
+      const payload = JSON.stringify({
+        mihpayid: providerRef,
+        status: 'success',
+        amount: '350.00'
+      });
+      rawBody = Buffer.from(payload, 'utf8');
+      const sig = crypto.createHmac('sha512', config.PAYU_WEBHOOK_SECRET).update(rawBody).digest('hex');
+      headers = { 'x-payu-signature': sig };
+    } else {
+      const payload = JSON.stringify({
+        id: eventId,
+        event: 'payment.captured',
+        payload: { payment: { entity: { id: providerRef, status: 'captured' } } }
+      });
+      rawBody = Buffer.from(payload, 'utf8');
+      const sig = crypto.createHmac('sha256', config.RAZORPAY_WEBHOOK_SECRET).update(rawBody).digest('hex');
+      headers = { 'x-razorpay-signature': sig };
+    }
 
-    // 3. Worker process item
-    const processed = await WebhookService.processNextQueueItem();
-    expect(processed).toBe(true);
+    await WebhookService.ingestWebhook(selectedGateway, rawBody, headers);
+
+    // 3. Worker process all pending queue items
+    while (await WebhookService.processNextQueueItem()) {
+      // process until queue is empty
+    }
 
     // 4. Assert transaction transitioned to CAPTURED
     const payment = await PaymentApplicationService.getPaymentById(paymentId);

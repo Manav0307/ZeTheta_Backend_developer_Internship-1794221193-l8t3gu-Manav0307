@@ -35,8 +35,8 @@ export class ReconciliationService {
         `
         SELECT t.*, pa.id as attempt_id, pa.gateway, pa.provider_payment_ref
         FROM transactions t
-        LEFT JOIN payment_attempts pa ON pa.transaction_id = t.id AND pa.status IN ('SENT', 'UNKNOWN', 'AUTHORISED')
-        WHERE t.state IN ('AUTH_INITIATED', 'AUTH_TIMEOUT', 'CAPTURE_INITIATED')
+        LEFT JOIN payment_attempts pa ON pa.transaction_id = t.id AND pa.status IN ('SENT', 'UNKNOWN', 'AUTHORISED', 'CAPTURED')
+        WHERE (t.state IN ('AUTH_INITIATED', 'AUTH_TIMEOUT', 'CAPTURE_INITIATED') OR t.state = 'CAPTURED')
           AND t.created_at <= NOW() - ($1 || ' minutes')::INTERVAL
         ORDER BY t.created_at ASC
       `,

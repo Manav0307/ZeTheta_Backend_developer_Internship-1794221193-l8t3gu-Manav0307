@@ -153,8 +153,7 @@ export class WebhookService {
           `
           UPDATE webhook_queue
           SET status = 'PROCESSING',
-              lease_expires_at = NOW() + INTERVAL '30 seconds',
-              updated_at = NOW()
+              lease_expires_at = NOW() + INTERVAL '30 seconds'
           WHERE id = $1
         `,
           [queueItem.id]
@@ -201,7 +200,7 @@ export class WebhookService {
           const payloadStatus = String(payload.status || payload.payload?.payment?.entity?.status || payload.data?.object?.status || '').toLowerCase();
 
           if (
-            (payloadStatus === 'captured' || payloadStatus === 'succeeded' || eventType.includes('capture')) &&
+            (payloadStatus === 'captured' || payloadStatus === 'succeeded' || payloadStatus === 'success' || eventType.includes('capture')) &&
             (tx.state === 'AUTHORISED' || tx.state === 'CAPTURE_INITIATED')
           ) {
             await TransactionRepository.transitionState(client, {

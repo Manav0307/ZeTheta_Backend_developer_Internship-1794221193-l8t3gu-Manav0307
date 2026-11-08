@@ -54,12 +54,22 @@ export class PaymentApplicationService {
         params.merchantOrderId
       );
 
+      const idempotencyPayload = {
+        merchant_id: params.merchantId,
+        merchant_order_id: params.merchantOrderId,
+        amount_minor: params.amountMinor,
+        currency: params.currency,
+        payment_method: params.paymentMethod,
+        capture_mode: captureMode,
+        metadata: params.metadata || {}
+      };
+
       const claim = await IdempotencyManager.claimKey(
         client,
         params.merchantId,
         'PAYMENT_CREATE',
         params.idempotencyKey,
-        params,
+        idempotencyPayload,
         existingTx?.id
       );
 
@@ -414,10 +424,11 @@ export class PaymentApplicationService {
           paymentMethod: params.paymentMethod,
           currency: params.currency,
           amountMinor: params.amountMinor,
-          traceId
+          traceId,
+          excludeGateways: [selectedGateway]
         });
 
-        if (reroute.selectedGateway !== selectedGateway) {
+        if (reroute.selectedGateway) {
           alternateGateway = reroute.selectedGateway;
 
           await TransactionRepository.transitionState(client, {
@@ -567,12 +578,18 @@ export class PaymentApplicationService {
     let requestedAmount: bigint;
 
     await withTransaction(async (client) => {
+      const idempotencyPayload = {
+        merchant_id: params.merchantId,
+        transaction_id: params.transactionId,
+        amount_minor: params.amountMinor || null
+      };
+
       const claim = await IdempotencyManager.claimKey(
         client,
         params.merchantId,
         'CAPTURE',
         params.idempotencyKey,
-        params,
+        idempotencyPayload,
         params.transactionId
       );
 
@@ -753,12 +770,17 @@ export class PaymentApplicationService {
     let activeAttempt: any = null;
 
     await withTransaction(async (client) => {
+      const idempotencyPayload = {
+        merchant_id: params.merchantId,
+        transaction_id: params.transactionId
+      };
+
       const claim = await IdempotencyManager.claimKey(
         client,
         params.merchantId,
         'VOID',
         params.idempotencyKey,
-        params,
+        idempotencyPayload,
         params.transactionId
       );
 
@@ -870,12 +892,19 @@ export class PaymentApplicationService {
     let refundAmount: bigint;
 
     await withTransaction(async (client) => {
+      const idempotencyPayload = {
+        merchant_id: params.merchantId,
+        transaction_id: params.transactionId,
+        amount_minor: params.amountMinor || null,
+        reason: params.reason || null
+      };
+
       const claim = await IdempotencyManager.claimKey(
         client,
         params.merchantId,
         'REFUND',
         params.idempotencyKey,
-        params,
+        idempotencyPayload,
         params.transactionId
       );
 

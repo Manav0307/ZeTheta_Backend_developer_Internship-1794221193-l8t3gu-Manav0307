@@ -13,7 +13,7 @@ describe('Intelligent Router Unit & Scoring Tests', () => {
         `
         INSERT INTO transactions (
           merchant_id, merchant_order_id, payment_method, currency, amount_minor, trace_id
-        ) VALUES ('merch_test', 'ord_route_1', 'UPI', 'INR', 10000, $1)
+        ) VALUES ('merch_test', 'ord_route_1_' || gen_random_uuid(), 'UPI', 'INR', 10000, $1)
         RETURNING id
       `,
         [uuidv4()]
@@ -51,7 +51,7 @@ describe('Intelligent Router Unit & Scoring Tests', () => {
         `
         INSERT INTO transactions (
           merchant_id, merchant_order_id, payment_method, currency, amount_minor, trace_id
-        ) VALUES ('merch_test', 'ord_route_2', 'CARD', 'INR', 50000, $1)
+        ) VALUES ('merch_test', 'ord_route_2_' || gen_random_uuid(), 'CARD', 'INR', 50000, $1)
         RETURNING id
       `,
         [uuidv4()]
@@ -89,7 +89,7 @@ describe('Intelligent Router Unit & Scoring Tests', () => {
         `
         INSERT INTO transactions (
           merchant_id, merchant_order_id, payment_method, currency, amount_minor, trace_id
-        ) VALUES ('merch_test', 'ord_route_3', 'CARD', 'INR', 20000, $1)
+        ) VALUES ('merch_test', 'ord_route_3_' || gen_random_uuid(), 'CARD', 'INR', 20000, $1)
         RETURNING id
       `,
         [uuidv4()]

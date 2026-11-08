@@ -12,8 +12,9 @@ describe('Safe Failover & Timeout Integrity Integration Tests', () => {
   });
 
   it('Hard issuer decline: No automatic failover, terminal decline returned, attempt marked FAILED', async () => {
-    // Set razorpay to hard decline
+    // Set both card gateways to hard decline
     MockGatewayController.setBehavior('razorpay', 'hard_decline');
+    MockGatewayController.setBehavior('payu', 'hard_decline');
     const orderId = `ord_decline_${Date.now()}`;
 
     await expect(
@@ -34,8 +35,9 @@ describe('Safe Failover & Timeout Integrity Integration Tests', () => {
   });
 
   it('Definite 5xx error before execution: Triggers safe failover to alternate healthy gateway', async () => {
-    // Set razorpay to definite_5xx, stripe is healthy
+    // Set razorpay and payu to definite_5xx, stripe is healthy
     MockGatewayController.setBehavior('razorpay', 'definite_5xx');
+    MockGatewayController.setBehavior('payu', 'definite_5xx');
     MockGatewayController.setBehavior('stripe', 'success');
 
     const orderId = `ord_failover_${Date.now()}`;
@@ -62,15 +64,16 @@ describe('Safe Failover & Timeout Integrity Integration Tests', () => {
     const pool = getPool();
     const attempts = await PaymentAttemptRepository.listByTransactionId(pool, res.body.id);
     expect(attempts.length).toBe(2);
-    expect(attempts[0].gateway).toBe('razorpay');
+    expect(['razorpay', 'payu']).toContain(attempts[0].gateway);
     expect(attempts[0].status).toBe('FAILED');
     expect(attempts[1].gateway).toBe('stripe');
     expect(attempts[1].status).toBe('AUTHORISED');
   });
 
   it('Gateway timeout after execution: Marks attempt UNKNOWN and transaction AUTH_TIMEOUT, blocks second charge', async () => {
-    // Set razorpay to timeout_after_execution
+    // Set primary gateways to timeout_after_execution
     MockGatewayController.setBehavior('razorpay', 'timeout_after_execution');
+    MockGatewayController.setBehavior('payu', 'timeout_after_execution');
     const orderId = `ord_timeout_${Date.now()}`;
 
     const res = await PaymentApplicationService.initiatePayment({

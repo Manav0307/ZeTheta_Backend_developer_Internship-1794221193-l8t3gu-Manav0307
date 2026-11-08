@@ -12,12 +12,27 @@ export function canonicalizePayload(payload: any): string {
     return String(payload);
   }
   if (Array.isArray(payload)) {
-    return JSON.stringify(payload.map((item) => (typeof item === 'object' ? JSON.parse(canonicalizePayload(item)) : item)));
+    return JSON.stringify(
+      payload.map((item) =>
+        item === null || item === undefined
+          ? null
+          : typeof item === 'object'
+          ? JSON.parse(canonicalizePayload(item))
+          : item
+      )
+    );
   }
   const sortedKeys = Object.keys(payload).sort();
   const sortedObj: Record<string, any> = {};
   for (const k of sortedKeys) {
-    sortedObj[k] = typeof payload[k] === 'object' ? JSON.parse(canonicalizePayload(payload[k])) : payload[k];
+    const val = payload[k];
+    if (val === null || val === undefined) {
+      sortedObj[k] = null;
+    } else if (typeof val === 'object') {
+      sortedObj[k] = JSON.parse(canonicalizePayload(val));
+    } else {
+      sortedObj[k] = val;
+    }
   }
   return JSON.stringify(sortedObj);
 }

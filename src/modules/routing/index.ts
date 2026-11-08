@@ -37,10 +37,12 @@ export class IntelligentRouter {
       currency: string;
       amountMinor: string;
       traceId: string;
+      excludeGateways?: string[];
     }
   ): Promise<RoutingResult> {
     const routingConfig = await RoutingConfigRepository.getConfig(client);
     const allGateways = await GatewayConfigRepository.getAll(client);
+    const excluded = (params.excludeGateways || []).map((g) => g.toLowerCase());
 
     // 1. Filter eligible gateways
     const amount = BigInt(params.amountMinor);
@@ -48,6 +50,7 @@ export class IntelligentRouter {
 
     for (const gw of allGateways) {
       if (!gw.enabled) continue;
+      if (excluded.includes(gw.gateway_name.toLowerCase())) continue;
       if (!gw.supported_currencies.includes(params.currency)) continue;
 
       let methodSupported = false;
