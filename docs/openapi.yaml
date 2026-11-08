@@ -1,0 +1,671 @@
+openapi: 3.0.3
+info:
+  title: Zetheta Payment Orchestration API
+  version: 1.0.0
+  description: >
+    Production-grade Payment Orchestration Layer with Multi-Gateway Failover,
+    intelligent weighted routing, two-phase authorize/capture, durable webhook
+    deduplication, circuit breakers, outbound rate limiting, and reconciliation.
+servers:
+  - url: http://localhost:3000/api/v1
+    description: Local Development Server
+paths:
+  /payments:
+    post:
+      summary: Initiate a new payment
+      description: Initiates a payment with idempotent deduplication and intelligent routing across Razorpay, Stripe, PayU, and UPI.
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema:
+            type: string
+          description: Unique client-generated key (UUID v4) to prevent double charges.
+        - in: header
+          name: x-api-key
+          required: true
+          schema:
+            type: string
+          description: Merchant API authentication key.
+        - in: header
+          name: x-trace-id
+          required: false
+          schema:
+            type: string
+          description: Correlation trace identifier.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatePaymentRequest'
+      responses:
+        '201':
+          description: Payment authorised or captured successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentResponse'
+        '202':
+          description: Payment outcome uncertain (timeout/reconciliation scheduled).
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '409':
+          $ref: '#/components/responses/ConflictError'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntityError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+    get:
+      summary: Find payment by merchant order ID
+      parameters:
+        - in: query
+          name: merchant_order_id
+          required: true
+          schema:
+            type: string
+        - in: header
+          name: x-api-key
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Payment details retrieved.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentDetailResponse'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /payments/{id}:
+    get:
+      summary: Retrieve payment by ID
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: header
+          name: x-api-key
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Payment details and sanitized attempt records.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentDetailResponse'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /payments/{id}/capture:
+    post:
+      summary: Capture an authorised payment
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema:
+            type: string
+        - in: header
+          name: x-api-key
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                amount_minor:
+                  type: string
+                  description: Optional partial capture amount in minor units.
+      responses:
+        '200':
+          description: Payment captured successfully.
+        '409':
+          $ref: '#/components/responses/ConflictError'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntityError'
+
+  /payments/{id}/void:
+    post:
+      summary: Void an authorised hold
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema:
+            type: string
+        - in: header
+          name: x-api-key
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Authorisation voided.
+        '422':
+          $ref: '#/components/responses/UnprocessableEntityError'
+
+  /payments/{id}/refund:
+    post:
+      summary: Initiate a refund
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema:
+            type: string
+        - in: header
+          name: x-api-key
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                amount_minor:
+                  type: string
+                reason:
+                  type: string
+      responses:
+        '200':
+          description: Refund processed.
+        '422':
+          $ref: '#/components/responses/UnprocessableEntityError'
+
+  /payments/{id}/refunds:
+    get:
+      summary: List refunds for a payment
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: header
+          name: x-api-key
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of refund records.
+
+  /payments/{id}/timeline:
+    get:
+      summary: Get state transition history (immutable audit trail)
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: header
+          name: x-api-key
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Immutable state transition logs.
+
+  /webhooks/razorpay:
+    post:
+      summary: Razorpay webhook receiver
+      parameters:
+        - in: header
+          name: x-razorpay-signature
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Webhook event verified and enqueued durably.
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+
+  /webhooks/stripe:
+    post:
+      summary: Stripe webhook receiver
+      parameters:
+        - in: header
+          name: stripe-signature
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Webhook event verified and enqueued durably.
+
+  /webhooks/payu:
+    post:
+      summary: PayU webhook receiver
+      parameters:
+        - in: header
+          name: x-payu-signature
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Webhook event verified and enqueued durably.
+
+  /webhooks/upi:
+    post:
+      summary: UPI callback receiver
+      parameters:
+        - in: header
+          name: x-upi-signature
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Webhook event verified and enqueued durably.
+
+  /gateways:
+    get:
+      summary: List all configured gateways
+      parameters:
+        - in: header
+          name: x-api-key
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Configured gateway capabilities and fees.
+
+  /gateways/{name}/health:
+    get:
+      summary: Get per-method circuit breaker health status
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+        - in: header
+          name: x-api-key
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Gateway health status and breaker state.
+
+  /gateways/{name}/metrics:
+    get:
+      summary: Get gateway performance metrics
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: window_minutes
+          schema:
+            type: integer
+            default: 60
+        - in: header
+          name: x-api-key
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Rolling latency, volume, and success rate metrics.
+
+  /gateways/{name}/config:
+    put:
+      summary: Update gateway configuration
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+        - in: header
+          name: x-api-key
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Gateway configuration updated.
+
+  /routing/config:
+    get:
+      summary: Get current routing weights
+      parameters:
+        - in: header
+          name: x-api-key
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Current routing configuration.
+    put:
+      summary: Update routing weights
+      parameters:
+        - in: header
+          name: x-api-key
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - weight_success
+                - weight_latency
+                - weight_cost
+                - weight_health
+                - weight_method_fit
+              properties:
+                weight_success:
+                  type: number
+                weight_latency:
+                  type: number
+                weight_cost:
+                  type: number
+                weight_health:
+                  type: number
+                weight_method_fit:
+                  type: number
+      responses:
+        '200':
+          description: Routing configuration updated and immediately active.
+
+  /reconciliation/trigger:
+    post:
+      summary: Manually trigger reconciliation run
+      parameters:
+        - in: header
+          name: x-api-key
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                stale_minutes:
+                  type: integer
+      responses:
+        '202':
+          description: Reconciliation run triggered.
+
+  /reconciliation/reports/{run_id}:
+    get:
+      summary: Get reconciliation report
+      parameters:
+        - in: path
+          name: run_id
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: header
+          name: x-api-key
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Reconciliation report and anomaly log.
+
+  /analytics/success-rate:
+    get:
+      summary: Gateway success rate analytics
+      parameters:
+        - in: query
+          name: time_range_minutes
+          schema:
+            type: integer
+            default: 60
+        - in: header
+          name: x-api-key
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Success rate analytics.
+
+  /analytics/volume:
+    get:
+      summary: Transaction volume analytics
+      parameters:
+        - in: query
+          name: time_range_minutes
+          schema:
+            type: integer
+            default: 60
+        - in: header
+          name: x-api-key
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Volume analytics.
+
+  /health:
+    get:
+      summary: System health check endpoint
+      responses:
+        '200':
+          description: System and database healthy.
+        '503':
+          description: Database or system unhealthy.
+
+components:
+  schemas:
+    CreatePaymentRequest:
+      type: object
+      required:
+        - merchant_order_id
+        - amount_minor
+        - payment_method
+      properties:
+        merchant_order_id:
+          type: string
+          example: order_1001
+        amount_minor:
+          type: string
+          example: '500000'
+        currency:
+          type: string
+          default: INR
+          example: INR
+        payment_method:
+          type: string
+          enum: [CARD, UPI, NETBANKING]
+          example: CARD
+        capture_method:
+          type: string
+          enum: [MANUAL, AUTOMATIC]
+          default: MANUAL
+          example: MANUAL
+        metadata:
+          type: object
+    PaymentResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        merchant_order_id:
+          type: string
+        amount_minor:
+          type: string
+        currency:
+          type: string
+        state:
+          type: string
+        selected_gateway:
+          type: string
+        provider_payment_ref:
+          type: string
+        trace_id:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+    PaymentDetailResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        merchant_order_id:
+          type: string
+        amount_minor:
+          type: string
+        currency:
+          type: string
+        state:
+          type: string
+        authorized_minor:
+          type: string
+        captured_minor:
+          type: string
+        refunded_minor:
+          type: string
+        attempts:
+          type: array
+          items:
+            type: object
+        trace_id:
+          type: string
+    ErrorResponse:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: object
+          required:
+            - code
+            - message
+            - request_id
+            - timestamp
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            details:
+              type: object
+            request_id:
+              type: string
+            timestamp:
+              type: string
+              format: date-time
+
+  responses:
+    BadRequestError:
+      description: Bad request / validation error.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ConflictError:
+      description: Idempotency conflict / resource duplicate.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFoundError:
+      description: Resource not found.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    UnprocessableEntityError:
+      description: Invalid state transition or payment decline.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    TooManyRequestsError:
+      description: Outbound rate limit backpressure.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
