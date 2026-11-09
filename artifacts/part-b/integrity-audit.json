@@ -1,0 +1,86 @@
+{
+  "timestamp": "2026-11-09T10:12:37.517Z",
+  "allPassed": true,
+  "checks": [
+    {
+      "id": "Q01",
+      "name": "Zero Orphan Payment Attempts",
+      "description": "Every payment attempt must reference an existing transaction.",
+      "query": "\n        SELECT pa.id, pa.transaction_id\n        FROM payment_attempts pa\n        LEFT JOIN transactions t ON pa.transaction_id = t.id\n        WHERE t.id IS NULL;\n      ",
+      "violationsFound": 0,
+      "passed": true
+    },
+    {
+      "id": "Q02",
+      "name": "Financial Arithmetic Invariants",
+      "description": "captured <= authorized AND (refunded + reserved) <= captured.",
+      "query": "\n        SELECT id, authorized_minor, captured_minor, refunded_minor, reserved_refund_minor\n        FROM transactions\n        WHERE captured_minor > authorized_minor \n           OR (refunded_minor + reserved_refund_minor) > captured_minor;\n      ",
+      "violationsFound": 0,
+      "passed": true
+    },
+    {
+      "id": "Q03",
+      "name": "Audit Ledger Trigger Active",
+      "description": "Trigger trg_state_log_immutable must be enabled on transaction_state_log.",
+      "query": "\n        SELECT tgname, relname, tgenabled\n        FROM pg_trigger tg\n        JOIN pg_class cl ON tg.tgrelid = cl.oid\n        WHERE cl.relname = 'transaction_state_log' \n          AND tg.tgname = 'trg_state_log_immutable';\n      ",
+      "violationsFound": 0,
+      "passed": true
+    },
+    {
+      "id": "Q04",
+      "name": "Composite Idempotency Uniqueness",
+      "description": "Zero duplicate (merchant_id, operation, key) rows in idempotency_keys.",
+      "query": "\n        SELECT merchant_id, operation, key, COUNT(*) as cnt\n        FROM idempotency_keys\n        GROUP BY merchant_id, operation, key\n        HAVING COUNT(*) > 1;\n      ",
+      "violationsFound": 0,
+      "passed": true
+    },
+    {
+      "id": "Q05",
+      "name": "Single Active Attempt Invariant",
+      "description": "No transaction may have more than one concurrent active attempt.",
+      "query": "\n        SELECT transaction_id, COUNT(*) as active_cnt\n        FROM payment_attempts\n        WHERE status IN ('CREATED', 'SENT', 'UNKNOWN')\n        GROUP BY transaction_id\n        HAVING COUNT(*) > 1;\n      ",
+      "violationsFound": 0,
+      "passed": true
+    },
+    {
+      "id": "Q06",
+      "name": "Legal State Log Transitions",
+      "description": "Zero identical from_state = to_state rows unless explicitly permitted.",
+      "query": "\n        SELECT id, transaction_id, from_state, to_state, event\n        FROM transaction_state_log\n        WHERE event NOT IN ('REJECTED_TRANSITION', 'OUT_OF_ORDER_RESOLUTION', 'SETTLEMENT_INVESTIGATION_LOGGED')\n          AND from_state = to_state\n          AND from_state IS NOT NULL;\n      ",
+      "violationsFound": 0,
+      "passed": true
+    },
+    {
+      "id": "Q07",
+      "name": "No Stale Expired PROCESSING Keys",
+      "description": "Zero idempotency keys in PROCESSING status past expiration.",
+      "query": "\n        SELECT merchant_id, operation, key\n        FROM idempotency_keys\n        WHERE status = 'PROCESSING' AND expires_at < NOW();\n      ",
+      "violationsFound": 0,
+      "passed": true
+    },
+    {
+      "id": "Q08",
+      "name": "Webhook Ingestion Deduplication",
+      "description": "Zero duplicate (gateway, event_id) rows in processed_webhook_events.",
+      "query": "\n        SELECT gateway, event_id, COUNT(*) as cnt\n        FROM processed_webhook_events\n        GROUP BY gateway, event_id\n        HAVING COUNT(*) > 1;\n      ",
+      "violationsFound": 0,
+      "passed": true
+    },
+    {
+      "id": "Q09",
+      "name": "Zero Negative Monetary Values",
+      "description": "All monetary fields must be non-negative integers.",
+      "query": "\n        SELECT id, amount_minor, authorized_minor, captured_minor, refunded_minor\n        FROM transactions\n        WHERE amount_minor < 0 \n           OR authorized_minor < 0 \n           OR captured_minor < 0 \n           OR refunded_minor < 0 \n           OR reserved_refund_minor < 0;\n      ",
+      "violationsFound": 0,
+      "passed": true
+    },
+    {
+      "id": "Q10",
+      "name": "Captures and Refunds Foreign Key Consistency",
+      "description": "Zero dangling capture or refund records.",
+      "query": "\n        SELECT c.id\n        FROM capture_operations c\n        LEFT JOIN transactions t ON c.transaction_id = t.id\n        WHERE t.id IS NULL\n        UNION ALL\n        SELECT r.id\n        FROM refunds r\n        LEFT JOIN transactions t ON r.transaction_id = t.id\n        WHERE t.id IS NULL;\n      ",
+      "violationsFound": 0,
+      "passed": true
+    }
+  ]
+}

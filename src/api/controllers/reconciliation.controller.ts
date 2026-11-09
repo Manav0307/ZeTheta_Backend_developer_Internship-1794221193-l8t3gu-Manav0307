@@ -27,4 +27,20 @@ export class ReconciliationController {
       next(err);
     }
   }
+
+  static async reconcileSettlements(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const settlementRecords = req.body?.settlement_records || req.body?.settlements || [];
+      const transactionIds = req.body?.transaction_ids;
+      const result = await ReconciliationService.reconcileSettlementBatch({
+        settlementFileRecords: settlementRecords,
+        transactionIds,
+        triggerSource: 'MANUAL'
+      });
+      res.status(200).json(result);
+    } catch (err) {
+      next(err);
+    }
+  }
 }
+

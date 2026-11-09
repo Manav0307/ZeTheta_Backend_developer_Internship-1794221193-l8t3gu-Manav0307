@@ -12,6 +12,8 @@ import {
   VerifiedGatewayEvent
 } from './gateway.interface.js';
 import { MockGatewayController } from './mocks/index.js';
+import { MockStateStore } from '../modules/gateway-mocks/mock-state.store.js';
+
 
 export class PayUAdapter implements PaymentGateway {
   readonly name = 'payu' as const;
@@ -96,6 +98,20 @@ export class PayUAdapter implements PaymentGateway {
   }
 
   async capture(input: CaptureInput): Promise<GatewayOutcome> {
+    const scenarioFailFirstN = MockStateStore.getScenarioParam<number>('payu_capture_fail_count');
+    if (scenarioFailFirstN !== undefined) {
+      const currentAttempts = (MockStateStore.getScenarioParam<number>(`payu_capture_attempts_${input.providerPaymentRef}`) || 0) + 1;
+      MockStateStore.setScenarioParam(`payu_capture_attempts_${input.providerPaymentRef}`, currentAttempts);
+      if (currentAttempts <= scenarioFailFirstN) {
+        return {
+          status: 'TRANSIENT_FAILURE',
+          errorCode: 'BAD_GATEWAY_502',
+          errorMessage: 'PayU 502 Bad Gateway',
+          durationMs: 120
+        };
+      }
+    }
+
     const behavior = MockGatewayController.getBehavior(this.name);
     if (behavior === 'capture_failure') {
       return {
@@ -107,6 +123,7 @@ export class PayUAdapter implements PaymentGateway {
     }
 
     MockGatewayController.recordCharge(input.providerPaymentRef, 'CAPTURED', input.amountMinor, this.name);
+    MockStateStore.updatePaymentStatus(input.providerPaymentRef, 'CAPTURED', input.amountMinor);
     return {
       status: 'CAPTURED',
       providerPaymentRef: input.providerPaymentRef,
@@ -114,6 +131,7 @@ export class PayUAdapter implements PaymentGateway {
       durationMs: 125
     };
   }
+
 
   async void(input: VoidInput): Promise<GatewayOutcome> {
     MockGatewayController.recordCharge(input.providerPaymentRef, 'VOIDED', '0', this.name);
@@ -153,13 +171,23 @@ export class PayUAdapter implements PaymentGateway {
     if (!input.providerPaymentRef) {
       return { status: 'UNKNOWN' };
     }
-    const charge = MockGatewayController.getCharge(input.providerPaymentRef);
-    if (charge) {
+    const forcedStatus = MockStateStore.getScenarioParam<string>(`status_${input.providerPaymentRef}`);
+    if (forcedStatus) {
       return {
-        status: charge.status as any,
+        status: forcedStatus as any,
         providerPaymentRef: input.providerPaymentRef,
-        amountMinor: charge.amountMinor,
-        rawResponse: { status: charge.status }
+        rawResponse: { status: forcedStatus }
+      };
+    }
+    const charge = MockGatewayController.getCharge(input.providerPaymentRef);
+    const mockPayment = MockStateStore.getPayment(input.providerPaymentRef);
+    if (charge || mockPayment) {
+      const status = (charge?.status || mockPayment?.status || 'UNKNOWN') as any;
+      return {
+        status,
+        providerPaymentRef: input.providerPaymentRef,
+        amountMinor: charge?.amountMinor || mockPayment?.amountMinor,
+        rawResponse: { status }
       };
     }
     return {
@@ -168,6 +196,7 @@ export class PayUAdapter implements PaymentGateway {
       rawResponse: { status: 'authorized' }
     };
   }
+
 
   verifyWebhook(
     rawBody: Buffer,

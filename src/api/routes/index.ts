@@ -11,6 +11,7 @@ import adminRoutes from './admin.routes.js';
 const router = Router();
 
 router.use('/payments', paymentRoutes);
+router.use('/transactions', paymentRoutes);
 router.use('/webhooks', webhookRoutes);
 router.use('/gateways', gatewayRoutes);
 router.use('/routing', routingRoutes);

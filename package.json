@@ -17,7 +17,13 @@
     "test": "vitest run tests/unit",
     "test:integration": "vitest run tests/integration",
     "test:e2e": "vitest run tests/e2e",
+    "test:partb": "vitest run tests/part-b/scenarios",
+    "partb:bench": "tsx scripts/part-b-benchmarks.ts",
+    "partb:integrity": "tsx scripts/part-b-integrity.ts",
+    "partb:report": "tsx scripts/part-b-report.ts",
+    "partb:all": "vitest run tests/part-b/scenarios && tsx scripts/part-b-benchmarks.ts && tsx scripts/part-b-integrity.ts && tsx scripts/part-b-report.ts",
     "test:all": "vitest run"
+
   },
   "dependencies": {
     "dotenv": "^16.4.7",

@@ -80,3 +80,33 @@ export class ServiceUnavailableError extends AppError {
   }
 }
 
+export class InvalidStateTransitionException extends UnprocessableEntityError {
+  public readonly allowedTransitions: string[];
+  public readonly current: string;
+  public readonly requested: string;
+
+  constructor(
+    current: string,
+    requested: string,
+    allowedTransitions: string[],
+    details?: ApiErrorDetails
+  ) {
+    super(
+      `Illegal transition from state ${current} to ${requested}. Allowed transitions: [${allowedTransitions.join(', ')}]`,
+      'INVALID_STATE_TRANSITION',
+      {
+        ...details,
+        error: 'INVALID_STATE_TRANSITION',
+        current,
+        requested,
+        allowedTransitions
+      }
+    );
+    this.name = 'InvalidStateTransitionException';
+    this.allowedTransitions = allowedTransitions;
+    this.current = current;
+    this.requested = requested;
+  }
+}
+
+

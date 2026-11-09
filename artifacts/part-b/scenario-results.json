@@ -1,0 +1,111 @@
+{
+  "timestamp": "2026-11-09T10:12:37.846Z",
+  "allPassed": true,
+  "scenarios": [
+    {
+      "id": "FS-01",
+      "name": "Gateway Timeout During Authorization",
+      "file": "tests/part-b/scenarios/FS-01.test.ts",
+      "passed": true,
+      "description": "Breaker failure incremented, alternate card gateway completes, <2s latency, double-charge rule verified."
+    },
+    {
+      "id": "FS-02",
+      "name": "Duplicate Webhook Delivery 3x",
+      "file": "tests/part-b/scenarios/FS-02.test.ts",
+      "passed": true,
+      "description": "Identical payment.captured ingested 3x, all HTTP 200, exactly 1 state transition, 0 duplicate charges."
+    },
+    {
+      "id": "FS-03",
+      "name": "Double Submit Under High Concurrency",
+      "file": "tests/part-b/scenarios/FS-03.test.ts",
+      "passed": true,
+      "description": "Concurrent identical Idempotency-Key requests handled safely, exactly 1 transaction created."
+    },
+    {
+      "id": "FS-04",
+      "name": "502 During Capture with Exponential Backoff",
+      "file": "tests/part-b/scenarios/FS-04.test.ts",
+      "passed": true,
+      "description": "PayU 502 backoff (1s, 2s, 4s), late gateway status check, terminal CAPTURE_FAILED upon exhaustion."
+    },
+    {
+      "id": "FS-05",
+      "name": "Partial Capture and Remainder Hold Handling",
+      "file": "tests/part-b/scenarios/FS-05.test.ts",
+      "passed": true,
+      "description": "Captured ₹800 of ₹1200, PARTIALLY_CAPTURED state, void remainder released hold cleanly."
+    },
+    {
+      "id": "FS-06",
+      "name": "Early Webhook Arrival Race Resolution",
+      "file": "tests/part-b/scenarios/FS-06.test.ts",
+      "passed": true,
+      "description": "Stripe webhook arrives before sync auth, state moves to CAPTURED, sync handler resolves idempotently."
+    },
+    {
+      "id": "FS-07",
+      "name": "Cascade Failure & Method-Fit Routing",
+      "file": "tests/part-b/scenarios/FS-07.test.ts",
+      "passed": true,
+      "description": "Preserves payment method constraints: UPI never routed to Card-only Stripe; Stripe 429 backoff respected."
+    },
+    {
+      "id": "FS-08",
+      "name": "Refund on Already-Settled Payment",
+      "file": "tests/part-b/scenarios/FS-08.test.ts",
+      "passed": true,
+      "description": "Payment in SETTLED state refunded: SETTLED -> REFUND_INITIATED -> REFUNDED without balance corruption."
+    },
+    {
+      "id": "FS-09",
+      "name": "Multi-Process Idempotency Race",
+      "file": "tests/part-b/scenarios/FS-09.test.ts",
+      "passed": true,
+      "description": "5 simultaneous competing requests on identical key: exactly 1 payment created, 0 duplicate debits."
+    },
+    {
+      "id": "FS-10",
+      "name": "Webhook Tampering & Signature Verification",
+      "file": "tests/part-b/scenarios/FS-10.test.ts",
+      "passed": true,
+      "description": "Tampered payload rejected with HTTP 401 WEBHOOK_SIGNATURE_INVALID, DB state preserved."
+    },
+    {
+      "id": "FS-11",
+      "name": "Missing Settlements in Batch Reconciliation",
+      "file": "tests/part-b/scenarios/FS-11.test.ts",
+      "passed": true,
+      "description": "5 missing settlements flagged as RECONCILIATION_MISMATCH, NO auto-refund, audit investigation logged."
+    },
+    {
+      "id": "FS-12",
+      "name": "UPI Collect Request Expiry & Mandate Timeout",
+      "file": "tests/part-b/scenarios/FS-12.test.ts",
+      "passed": true,
+      "description": "Customer unapproved UPI collect mandate expires to AUTH_EXPIRED with 0 retries."
+    },
+    {
+      "id": "FS-13",
+      "name": "Multi-Tenant Idempotency Collision",
+      "file": "tests/part-b/scenarios/FS-13.test.ts",
+      "passed": true,
+      "description": "Two merchants using identical UUID idempotency key succeed independently via composite primary key."
+    },
+    {
+      "id": "FS-14",
+      "name": "Database Pool Exhaustion & Backpressure",
+      "file": "tests/part-b/scenarios/FS-14.test.ts",
+      "passed": true,
+      "description": "Bounded pool saturation handles backpressure gracefully without connection leak or process hang."
+    },
+    {
+      "id": "FS-15",
+      "name": "State Machine Illegal Transition Protection",
+      "file": "tests/part-b/scenarios/FS-15.test.ts",
+      "passed": true,
+      "description": "CREATED -> REFUNDED jump rejected with 422, allowed transitions returned, REJECTED_TRANSITION logged."
+    }
+  ]
+}

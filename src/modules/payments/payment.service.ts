@@ -10,15 +10,17 @@ import { IntelligentRouter } from '../routing/index.js';
 import { OutboundRateLimiter } from '../rate-limiter/index.js';
 import { GatewayRegistry } from '../../gateways/registry.js';
 import { IdempotencyManager } from '../idempotency/index.js';
-import { PaymentMethod, CaptureMode, TransactionRecord } from '../../shared/types/index.js';
+import { PaymentMethod, CaptureMode, TransactionRecord, TransactionState } from '../../shared/types/index.js';
 import {
   BadRequestError,
   NotFoundError,
   ConflictError,
   UnprocessableEntityError,
   TooManyRequestsError,
-  AppError
+  AppError,
+  InvalidStateTransitionException
 } from '../../shared/errors/index.js';
+
 import { logger } from '../../shared/logging/logger.js';
 
 export class PaymentApplicationService {
@@ -657,7 +659,7 @@ export class PaymentApplicationService {
 
     // Call Gateway outside DB transaction
     const adapter = GatewayRegistry.get(activeAttempt.gateway);
-    const outcome = await adapter.capture({
+    let outcome = await adapter.capture({
       transactionId: params.transactionId,
       attemptId: activeAttempt.id,
       providerPaymentRef: activeAttempt.provider_payment_ref,
@@ -665,6 +667,48 @@ export class PaymentApplicationService {
       traceId,
       idempotencyKey: params.idempotencyKey
     });
+
+    // Check for transient failure (e.g. 502 Bad Gateway) and retry with exponential backoff (Part B FS-04)
+    if (outcome.status === 'TRANSIENT_FAILURE') {
+      const delays = process.env.TEST_FAST_RETRIES === 'true' ? [10, 20, 40] : [1000, 2000, 4000];
+      for (const delay of delays) {
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        outcome = await adapter.capture({
+          transactionId: params.transactionId,
+          attemptId: activeAttempt.id,
+          providerPaymentRef: activeAttempt.provider_payment_ref,
+          amountMinor: requestedAmount!.toString(),
+          traceId,
+          idempotencyKey: params.idempotencyKey
+        });
+        if (outcome.status === 'CAPTURED') {
+          break;
+        }
+      }
+
+      // If retries exhausted and still not captured, query gateway status for late capture success
+      if (outcome.status !== 'CAPTURED') {
+        try {
+          const gwStatus = await adapter.fetchPaymentStatus({
+            transactionId: params.transactionId,
+            attemptId: activeAttempt.id,
+            providerPaymentRef: activeAttempt.provider_payment_ref,
+            traceId
+          });
+          if (gwStatus.status === 'CAPTURED') {
+            outcome = {
+              status: 'CAPTURED',
+              providerPaymentRef: activeAttempt.provider_payment_ref,
+              rawResponse: gwStatus.rawResponse || { status: 'captured' },
+              durationMs: 100
+            };
+          }
+        } catch {
+          // Keep failed outcome
+        }
+      }
+    }
+
 
     let finalTx: TransactionRecord;
     await withTransaction(async (client) => {
@@ -737,13 +781,16 @@ export class PaymentApplicationService {
           422,
           errorBody
         );
-
-        throw new UnprocessableEntityError(
-          outcome.errorMessage || 'Capture operation failed',
-          'CAPTURE_FAILED'
-        );
       }
     });
+
+    if (outcome.status !== 'CAPTURED') {
+      throw new UnprocessableEntityError(
+        outcome.errorMessage || 'Capture operation failed',
+        'CAPTURE_FAILED'
+      );
+    }
+
 
     return {
       statusCode: 200,
@@ -1158,4 +1205,151 @@ export class PaymentApplicationService {
     }
     return RefundRepository.listByTransactionId(pool, id);
   }
+
+  static async expirePayment(params: {
+    transactionId: string;
+    merchantId?: string;
+    traceId?: string;
+  }): Promise<{ statusCode: number; body: any }> {
+    const traceId = params.traceId || uuidv4();
+    let finalTx!: TransactionRecord;
+
+    await withTransaction(async (client) => {
+      const tx = await TransactionRepository.lockForUpdate(client, params.transactionId);
+      if (params.merchantId && tx.merchant_id !== params.merchantId) {
+        throw new NotFoundError('Transaction not found', 'TRANSACTION_NOT_FOUND');
+      }
+
+      if (tx.state !== 'AUTH_INITIATED' && tx.state !== 'AUTHORISED') {
+        throw new UnprocessableEntityError(
+          `Cannot expire payment in state ${tx.state}. Must be AUTH_INITIATED or AUTHORISED.`,
+          'INVALID_STATE_FOR_EXPIRY'
+        );
+      }
+
+      finalTx = await TransactionRepository.transitionState(client, {
+        transactionId: tx.id,
+        toState: 'AUTH_EXPIRED',
+        event: tx.state === 'AUTH_INITIATED' ? 'MANDATE_EXPIRED' : 'HOLD_EXPIRED',
+        traceId,
+        createdBy: 'mandate_expiry_worker'
+      });
+    });
+
+    return {
+      statusCode: 200,
+      body: {
+        id: finalTx.id,
+        state: finalTx.state,
+        trace_id: traceId,
+        message: 'Payment authorization expired'
+      }
+    };
+  }
+
+  static async voidRemainder(params: {
+    transactionId: string;
+    merchantId?: string;
+    idempotencyKey?: string;
+    traceId?: string;
+  }): Promise<{ statusCode: number; body: any }> {
+    const traceId = params.traceId || uuidv4();
+    let finalTx!: TransactionRecord;
+
+    await withTransaction(async (client) => {
+      const tx = await TransactionRepository.lockForUpdate(client, params.transactionId);
+      if (params.merchantId && tx.merchant_id !== params.merchantId) {
+        throw new NotFoundError('Transaction not found', 'TRANSACTION_NOT_FOUND');
+      }
+
+      if (tx.state !== 'PARTIALLY_CAPTURED') {
+        throw new UnprocessableEntityError(
+          `Cannot void remainder for transaction in state ${tx.state}. Must be PARTIALLY_CAPTURED.`,
+          'INVALID_STATE_FOR_VOID'
+        );
+      }
+
+      finalTx = await TransactionRepository.transitionState(client, {
+        transactionId: tx.id,
+        toState: 'CAPTURED',
+        event: 'RELEASE_REMAINDER',
+        traceId,
+        createdBy: 'merchant_api',
+        authorized_minor: tx.captured_minor // reduce authorized hold to captured amount
+      });
+    });
+
+
+    return {
+      statusCode: 200,
+      body: {
+        id: finalTx.id,
+        state: finalTx.state,
+        authorized_minor: finalTx.authorized_minor,
+        captured_minor: finalTx.captured_minor,
+        trace_id: traceId,
+        message: 'Remainder hold successfully voided/released'
+      }
+    };
+  }
+
+  static async transitionManualState(params: {
+    transactionId: string;
+    targetState: TransactionState;
+    traceId?: string;
+  }): Promise<{ statusCode: number; body: any }> {
+    const traceId = params.traceId || uuidv4();
+    let updatedTx: TransactionRecord | null = null;
+    let transitionError: any = null;
+
+    await withTransaction(async (client) => {
+      try {
+        updatedTx = await TransactionRepository.transitionState(client, {
+          transactionId: params.transactionId,
+          toState: params.targetState,
+          event: 'MANUAL_TRANSITION',
+          traceId,
+          createdBy: 'operator_override'
+        });
+      } catch (err) {
+        if (err instanceof InvalidStateTransitionException) {
+          // Persist REJECTED_TRANSITION event on this client so it commits
+          await client.query(
+            `INSERT INTO transaction_state_log (
+              transaction_id, from_state, to_state, event,
+              metadata, trace_id, created_by
+            ) VALUES ($1, $2, $3, 'REJECTED_TRANSITION', $4, $5, 'operator_override')`,
+            [
+              params.transactionId,
+              err.current,
+              err.current,
+              JSON.stringify({
+                attempted_to_state: params.targetState,
+                allowed_transitions: err.allowedTransitions
+              }),
+              traceId
+            ]
+          );
+          transitionError = err;
+          return; // Allow commit of the rejected audit log
+        }
+        throw err;
+      }
+    });
+
+    if (transitionError) {
+      throw transitionError;
+    }
+
+    return {
+      statusCode: 200,
+      body: {
+        id: updatedTx!.id,
+        state: updatedTx!.state,
+        trace_id: traceId
+      }
+    };
+  }
+
 }
+

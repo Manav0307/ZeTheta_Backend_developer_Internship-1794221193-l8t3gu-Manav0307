@@ -1,0 +1,152 @@
+openapi: 3.0.3
+info:
+  title: ZeTheta Part B Simulation & Mock Gateway Control API
+  description: |
+    Specification for deterministic mock gateway controls, fault injection headers, and simulation orchestration endpoints
+    as specified in Part B (printed PDF pages 24-33, §B4.3) of the ZeTheta Payment Orchestration Platform.
+  version: 1.0.0
+servers:
+  - url: http://localhost:3000/api/v1
+    description: Local Development / Test Server
+
+paths:
+  /gateways/{name}/mock-behavior:
+    post:
+      summary: Set deterministic mock behavior for a payment gateway
+      description: |
+        Configures the runtime mock behavior for a specific gateway adapter (Razorpay, PayU, Stripe, UPI).
+        Restricted to test/admin environments.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [razorpay, payu, stripe, upi]
+          description: Gateway identifier
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - behavior
+              properties:
+                behavior:
+                  type: string
+                  enum:
+                    - success
+                    - hard_decline
+                    - definite_5xx
+                    - timeout_before_execution
+                    - timeout_after_execution
+                    - delayed_success
+                    - capture_failure
+                    - refund_failure
+                    - rate_limited
+                delayMs:
+                  type: integer
+                  minimum: 0
+                  default: 0
+                  description: Simulated artificial latency in milliseconds
+      responses:
+        '200':
+          description: Mock behavior configured successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  gateway:
+                    type: string
+                  activeBehavior:
+                    type: string
+        '400':
+          description: Invalid gateway name or behavior
+
+    delete:
+      summary: Reset mock behavior for a gateway
+      description: Clears configured mock behaviors and restores default behavior (success).
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [razorpay, payu, stripe, upi]
+      responses:
+        '200':
+          description: Mock behavior reset
+
+  /simulation/scenarios/{scenarioId}/trigger:
+    post:
+      summary: Execute automated failure scenario trigger
+      description: |
+        Triggers execution of one of the 15 deterministic failure scenarios (FS-01 to FS-15).
+      parameters:
+        - name: scenarioId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^FS-(0[1-9]|1[0-5])$'
+          example: FS-01
+      responses:
+        '200':
+          description: Scenario executed with verification summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  scenarioId:
+                    type: string
+                  status:
+                    type: string
+                    enum: [PASS, FAIL]
+                  assertions:
+                    type: array
+                    items:
+                      type: string
+
+components:
+  parameters:
+    XMockResponseHeader:
+      name: X-Mock-Response
+      in: header
+      required: false
+      description: Deterministic outcome override for mock gateway operations
+      schema:
+        type: string
+        enum:
+          - SUCCESS
+          - DECLINED
+          - TIMEOUT
+          - SERVER_ERROR
+          - RATE_LIMIT
+    XMockDelayHeader:
+      name: X-Mock-Delay-Ms
+      in: header
+      required: false
+      description: Artificially injected latency in milliseconds
+      schema:
+        type: integer
+        minimum: 0
+    XMockGatewayDownHeader:
+      name: X-Mock-Gateway-Down
+      in: header
+      required: false
+      description: If true, simulates TCP connection refusal or gateway network partition
+      schema:
+        type: boolean
+    RetryAfterHeader:
+      name: Retry-After
+      in: header
+      required: false
+      description: Returned by mock gateway during 429 / 503 to signal backoff duration
+      schema:
+        type: integer
+

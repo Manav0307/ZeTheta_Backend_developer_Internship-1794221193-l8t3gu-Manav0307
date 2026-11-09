@@ -6,8 +6,18 @@ import {
   CaptureMode,
   TransactionStateLogRecord
 } from '../../shared/types/index.js';
-import { assertValidTransition } from '../../modules/state-machine/index.js';
-import { NotFoundError, UnprocessableEntityError } from '../../shared/errors/index.js';
+import {
+  isValidTransition,
+  getAllowedTransitions,
+  assertValidTransition
+} from '../../modules/state-machine/index.js';
+import {
+  NotFoundError,
+  UnprocessableEntityError,
+  InvalidStateTransitionException
+} from '../../shared/errors/index.js';
+import { getPool } from '../connection.js';
+
 
 export class TransactionRepository {
   static async create(
@@ -117,8 +127,43 @@ export class TransactionRepository {
     // 1. Lock parent row
     const current = await this.lockForUpdate(client, params.transactionId);
 
-    // 2. Validate transition legality
-    assertValidTransition(current.state, params.toState, params.event);
+    // 2. Early webhook / out-of-order race check (Part B FS-06)
+    if (current.state === 'CAPTURED' && (params.toState === 'AUTHORISED' || params.toState === 'CAPTURED')) {
+      await client.query(
+        `
+        INSERT INTO transaction_state_log (
+          transaction_id, attempt_id, from_state, to_state, event,
+          gateway_reference, gateway_response, metadata, trace_id, created_by
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      `,
+        [
+          params.transactionId,
+          params.attemptId || null,
+          current.state,
+          current.state,
+          'OUT_OF_ORDER_RESOLUTION',
+          params.gatewayReference || null,
+          JSON.stringify(params.gatewayResponse || {}),
+          JSON.stringify({ ...params.metadata, note: 'Out-of-order race resolved; already CAPTURED' }),
+          params.traceId,
+          params.createdBy
+        ]
+      );
+      return current;
+    }
+
+    // 3. Validate transition legality (Part B FS-15)
+    if (!isValidTransition(current.state, params.toState)) {
+      const allowed = getAllowedTransitions(current.state);
+      throw new InvalidStateTransitionException(
+        current.state,
+        params.toState,
+        allowed,
+        { event: params.event, ...params.metadata }
+      );
+    }
+
+
 
     // 3. Update transaction row
     const res = await client.query<TransactionRecord>(

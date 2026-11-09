@@ -1,0 +1,102 @@
+{
+  "timestamp": "2026-11-09T10:12:36.980Z",
+  "benchmarks": [
+    {
+      "id": "BM-01",
+      "name": "Payment Initiation Latency",
+      "description": "Measures round-trip payment initiation latency including routing and database state logging.",
+      "target": "P95 < 200ms, P99 < 500ms",
+      "measured": {
+        "min": 6.4397,
+        "p50": 9.662,
+        "p90": 13.2649,
+        "p95": 13.4699,
+        "p99": 42.1335,
+        "max": 42.1335,
+        "avg": 10.45
+      },
+      "passed": true,
+      "notes": "P95 measured at 13.4699ms, well within the 200ms SLA."
+    },
+    {
+      "id": "BM-02",
+      "name": "Sustained Throughput Under Concurrency",
+      "description": "Measures concurrent execution capacity and zero error rate under high request burst.",
+      "target": ">= 100 req/s, Error Rate < 0.1%",
+      "measured": {
+        "requests": 100,
+        "duration_seconds": 0.46,
+        "throughput_rps": 217.1,
+        "errors": 0,
+        "error_rate_pct": 0
+      },
+      "passed": true,
+      "notes": "Zero failures observed across 100 concurrent authorizations."
+    },
+    {
+      "id": "BM-03",
+      "name": "Webhook Ingestion-to-Processed Latency",
+      "description": "Measures end-to-end latency from webhook ingress to final PostgreSQL state transition.",
+      "target": "P99 < 2000ms",
+      "measured": {
+        "min": 2.7933,
+        "p50": 4.0282,
+        "p90": 4.8312,
+        "p95": 13.9448,
+        "p99": 13.9448,
+        "max": 13.9448,
+        "avg": 4.25
+      },
+      "passed": true,
+      "notes": "P99 measured at 13.9448ms, significantly faster than 2000ms SLA."
+    },
+    {
+      "id": "BM-04",
+      "name": "Failover Routing Decision Overhead",
+      "description": "Measures score evaluation, penalty adjustment, and secondary route selection latency.",
+      "target": "P95 < 50ms",
+      "measured": {
+        "min": 1.2124,
+        "p50": 1.4189,
+        "p90": 2.0026,
+        "p95": 2.046,
+        "p99": 2.6367,
+        "max": 2.6367,
+        "avg": 1.52
+      },
+      "passed": true,
+      "notes": "Intelligent routing decision completes in 1.4189ms average."
+    },
+    {
+      "id": "BM-05",
+      "name": "Concurrent Idempotency Resolution",
+      "description": "Measures cached key lookup and SHA-256 deterministic payload match speed.",
+      "target": "P99 < 10ms",
+      "measured": {
+        "min": 0.313,
+        "p50": 0.3588,
+        "p90": 0.56,
+        "p95": 0.5766,
+        "p99": 0.8327,
+        "max": 0.8327,
+        "avg": 0.4
+      },
+      "passed": true,
+      "notes": "Duplicate key resolution returns cached replay in 0.3588ms."
+    },
+    {
+      "id": "BM-06",
+      "name": "Reconciliation Batch Processing Throughput",
+      "description": "Measures bulk scanning, ledger matching, and settlement anomaly detection speed.",
+      "target": "> 1,000 tx/minute",
+      "measured": {
+        "scanned_count": 50,
+        "duration_seconds": 0.064,
+        "scanned_per_second": 781.3,
+        "projected_per_minute": 46878
+      },
+      "passed": true,
+      "notes": "Projected throughput of 46878 tx/min surpasses the 1,000 tx/min target."
+    }
+  ]
+}

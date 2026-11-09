@@ -6,6 +6,8 @@ import path from 'path';
 import { traceMiddleware } from './api/middleware/trace.middleware.js';
 import { errorMiddleware } from './api/middleware/error.middleware.js';
 import apiRouter from './api/routes/index.js';
+import { createMockGatewayApp } from './modules/gateway-mocks/app.js';
+
 
 export function createApp(): Express {
   const app = express();
@@ -38,8 +40,20 @@ export function createApp(): Express {
     console.warn('Failed to initialize OpenAPI docs:', err);
   }
 
-  // API Router
+  // API Router & Compatibility Aliases
   app.use('/api/v1', apiRouter);
+  app.use('/v1', apiRouter);
+
+  // Deterministic Mock Gateways for Part B Simulation
+  app.use('/mock', createMockGatewayApp());
+
+  // Optional Presentation Dashboard (Disabled by default, enabled via ENABLE_DASHBOARD=true)
+  if (process.env.ENABLE_DASHBOARD === 'true') {
+    const dashboardPath = path.resolve(process.cwd(), 'dashboard');
+    if (fs.existsSync(dashboardPath)) {
+      app.use('/dashboard', express.static(dashboardPath));
+    }
+  }
 
   // Health check alias at root
   app.get('/health', (_req, res) => res.redirect('/api/v1/health'));

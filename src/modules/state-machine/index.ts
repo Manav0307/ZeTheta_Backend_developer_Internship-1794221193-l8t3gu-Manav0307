@@ -1,5 +1,5 @@
 import { TransactionState } from '../../shared/types/index.js';
-import { UnprocessableEntityError } from '../../shared/errors/index.js';
+import { InvalidStateTransitionException } from '../../shared/errors/index.js';
 
 export interface TransitionRule {
   from: TransactionState;
@@ -16,6 +16,8 @@ export const VALID_TRANSITIONS: TransitionRule[] = [
   { from: 'AUTH_INITIATED', to: 'CAPTURED', event: 'CAPTURE_COMPLETE' },
   { from: 'AUTH_INITIATED', to: 'AUTH_FAILED', event: 'AUTH_DECLINE' },
   { from: 'AUTH_INITIATED', to: 'AUTH_TIMEOUT', event: 'AUTH_TIMEOUT' },
+  { from: 'AUTH_INITIATED', to: 'AUTH_EXPIRED', event: 'AUTH_EXPIRED' },
+  { from: 'AUTH_INITIATED', to: 'AUTH_EXPIRED', event: 'MANDATE_EXPIRED' },
   { from: 'AUTH_FAILED', to: 'ROUTE_SELECTED', event: 'SAFE_REROUTE' },
   { from: 'AUTH_FAILED', to: 'FAILED', event: 'TERMINAL_FAIL' },
   { from: 'AUTH_TIMEOUT', to: 'AUTHORISED', event: 'RECONCILED_SUCCESS' },
@@ -29,6 +31,8 @@ export const VALID_TRANSITIONS: TransitionRule[] = [
   { from: 'CAPTURE_INITIATED', to: 'PARTIALLY_CAPTURED', event: 'CAPTURE_PARTIAL' },
   { from: 'CAPTURE_INITIATED', to: 'CAPTURE_FAILED', event: 'CAPTURE_ERROR' },
   { from: 'PARTIALLY_CAPTURED', to: 'CAPTURE_INITIATED', event: 'CAPTURE_REMAINDER' },
+  { from: 'PARTIALLY_CAPTURED', to: 'VOID_INITIATED', event: 'BEGIN_VOID' },
+  { from: 'PARTIALLY_CAPTURED', to: 'CAPTURED', event: 'RELEASE_REMAINDER' },
   { from: 'PARTIALLY_CAPTURED', to: 'REFUND_INITIATED', event: 'BEGIN_REFUND' },
   { from: 'PARTIALLY_CAPTURED', to: 'SETTLED', event: 'SETTLEMENT_CONFIRMED' },
   { from: 'CAPTURE_FAILED', to: 'CAPTURE_INITIATED', event: 'RETRY_SAFE_CAPTURE' },
@@ -49,17 +53,25 @@ export function isValidTransition(from: TransactionState, to: TransactionState):
   return VALID_TRANSITIONS.some((t) => t.from === from && t.to === to);
 }
 
+export function getAllowedTransitions(from: TransactionState): TransactionState[] {
+  const allowed = new Set<TransactionState>();
+  for (const t of VALID_TRANSITIONS) {
+    if (t.from === from) {
+      allowed.add(t.to);
+    }
+  }
+  return Array.from(allowed);
+}
+
 export function assertValidTransition(
   from: TransactionState,
   to: TransactionState,
   event: string
 ): void {
   if (!isValidTransition(from, to)) {
-    throw new UnprocessableEntityError(
-      `Invalid state transition from ${from} to ${to} triggered by event ${event}`,
-      'INVALID_STATE_TRANSITION',
-      { from, to, event }
-    );
+    const allowed = getAllowedTransitions(from);
+    throw new InvalidStateTransitionException(from, to, allowed, { event });
   }
 }
+
 

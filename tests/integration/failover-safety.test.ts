@@ -7,14 +7,18 @@ import { UnprocessableEntityError } from '../../src/shared/errors/index.js';
 import { v4 as uuidv4 } from 'uuid';
 
 describe('Safe Failover & Timeout Integrity Integration Tests', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     MockGatewayController.reset();
+    const pool = getPool();
+    await pool.query("UPDATE gateway_circuit_breakers SET state = 'CLOSED', consecutive_failures = 0, opened_until = NULL;");
+    await pool.query("DELETE FROM gateway_health_metrics WHERE window_start >= NOW() - INTERVAL '1 hour';");
   });
 
   it('Hard issuer decline: No automatic failover, terminal decline returned, attempt marked FAILED', async () => {
-    // Set both card gateways to hard decline
+    // Set all card gateways to hard decline
     MockGatewayController.setBehavior('razorpay', 'hard_decline');
     MockGatewayController.setBehavior('payu', 'hard_decline');
+    MockGatewayController.setBehavior('stripe', 'hard_decline');
     const orderId = `ord_decline_${Date.now()}`;
 
     await expect(
@@ -35,10 +39,10 @@ describe('Safe Failover & Timeout Integrity Integration Tests', () => {
   });
 
   it('Definite 5xx error before execution: Triggers safe failover to alternate healthy gateway', async () => {
-    // Set razorpay and payu to definite_5xx, stripe is healthy
-    MockGatewayController.setBehavior('razorpay', 'definite_5xx');
+    // Primary card gateway (payu) fails with 5xx, alternate (razorpay) is healthy
     MockGatewayController.setBehavior('payu', 'definite_5xx');
-    MockGatewayController.setBehavior('stripe', 'success');
+    MockGatewayController.setBehavior('razorpay', 'success');
+    MockGatewayController.setBehavior('stripe', 'definite_5xx');
 
     const orderId = `ord_failover_${Date.now()}`;
     const startTime = Date.now();
@@ -57,23 +61,24 @@ describe('Safe Failover & Timeout Integrity Integration Tests', () => {
     // Failover should succeed and meet fast recovery target under 2s (2000ms)
     expect(res.statusCode).toBe(201);
     expect(res.body.state).toBe('AUTHORISED');
-    expect(res.body.selected_gateway).toBe('stripe');
+    expect(res.body.selected_gateway).toBe('razorpay');
     expect(elapsedMs).toBeLessThan(2000);
 
     // Verify both attempts exist with distinct gateway and statuses
     const pool = getPool();
     const attempts = await PaymentAttemptRepository.listByTransactionId(pool, res.body.id);
     expect(attempts.length).toBe(2);
-    expect(['razorpay', 'payu']).toContain(attempts[0].gateway);
+    expect(attempts[0].gateway).toBe('payu');
     expect(attempts[0].status).toBe('FAILED');
-    expect(attempts[1].gateway).toBe('stripe');
+    expect(attempts[1].gateway).toBe('razorpay');
     expect(attempts[1].status).toBe('AUTHORISED');
   });
 
   it('Gateway timeout after execution: Marks attempt UNKNOWN and transaction AUTH_TIMEOUT, blocks second charge', async () => {
-    // Set primary gateways to timeout_after_execution
+    // Set card gateways to timeout_after_execution
     MockGatewayController.setBehavior('razorpay', 'timeout_after_execution');
     MockGatewayController.setBehavior('payu', 'timeout_after_execution');
+    MockGatewayController.setBehavior('stripe', 'timeout_after_execution');
     const orderId = `ord_timeout_${Date.now()}`;
 
     const res = await PaymentApplicationService.initiatePayment({

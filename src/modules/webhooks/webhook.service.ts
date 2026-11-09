@@ -4,9 +4,10 @@ import { withTransaction, getPool } from '../../database/connection.js';
 import { GatewayRegistry } from '../../gateways/registry.js';
 import { TransactionRepository } from '../../database/repositories/transaction.repository.js';
 import { PaymentAttemptRepository } from '../../database/repositories/attempt.repository.js';
-import { BadRequestError, NotFoundError } from '../../shared/errors/index.js';
+import { BadRequestError, NotFoundError, UnauthorizedError } from '../../shared/errors/index.js';
 import { logger } from '../../shared/logging/logger.js';
 import { config } from '../../shared/config/index.js';
+
 
 export class WebhookService {
   private static getSecret(gateway: string): string {
@@ -41,12 +42,11 @@ export class WebhookService {
         error: verified.error,
         message: 'Webhook signature verification failed'
       });
-      throw new BadRequestError(
+      throw new UnauthorizedError(
         `Webhook signature verification failed: ${verified.error || 'invalid signature'}`,
-        'INVALID_WEBHOOK_SIGNATURE'
+        'WEBHOOK_SIGNATURE_INVALID'
       );
     }
-
     const payloadHash = crypto.createHash('sha256').update(rawBody).digest('hex');
 
     // 2. Atomic Deduplication & Durable Queue Insert in ONE SQL transaction
@@ -168,7 +168,8 @@ export class WebhookService {
     // 2. Process the event
     try {
       await withTransaction(async (client) => {
-        const payload = queueItem.payload;
+        const rawPayload = queueItem.payload;
+        const payload = typeof rawPayload === 'string' ? JSON.parse(rawPayload) : rawPayload;
         const gateway = queueItem.gateway;
 
         // Correlate with attempt & transaction
@@ -196,12 +197,12 @@ export class WebhookService {
           const tx = await TransactionRepository.lockForUpdate(client, txId);
 
           // Apply state transition if admissible
-          const eventType = String(queueItem.event_id || '').toLowerCase();
+          const eventType = String(payload.event || payload.type || queueItem.event_id || '').toLowerCase();
           const payloadStatus = String(payload.status || payload.payload?.payment?.entity?.status || payload.data?.object?.status || '').toLowerCase();
 
           if (
-            (payloadStatus === 'captured' || payloadStatus === 'succeeded' || payloadStatus === 'success' || eventType.includes('capture')) &&
-            (tx.state === 'AUTHORISED' || tx.state === 'CAPTURE_INITIATED')
+            (payloadStatus === 'captured' || payloadStatus === 'succeeded' || payloadStatus === 'success' || eventType.includes('capture') || eventType.includes('succeeded')) &&
+            (tx.state === 'AUTHORISED' || tx.state === 'CAPTURE_INITIATED' || tx.state === 'AUTH_INITIATED')
           ) {
             await TransactionRepository.transitionState(client, {
               transactionId: tx.id,
@@ -211,8 +212,12 @@ export class WebhookService {
               createdBy: 'webhook_worker',
               attemptId: attId,
               gatewayResponse: payload,
+              authorized_minor: tx.amount_minor,
               captured_minor: tx.amount_minor
             });
+
+
+
             if (attId) {
               await PaymentAttemptRepository.updateStatus(client, {
                 attempt_id: attId,
@@ -270,7 +275,9 @@ export class WebhookService {
 
       return true;
     } catch (err: any) {
+      console.error('Webhook processing failed with error:', err);
       // 3. Retry or DLQ handling
+
       await withTransaction(async (client) => {
         const retryCount = queueItem.retry_count + 1;
         const maxRetries = queueItem.max_retries || 3;
@@ -343,6 +350,16 @@ export class WebhookService {
 
     await this.processNextQueueItem();
     return true;
+  }
+
+  static async processQueueBatch(limit: number = 10): Promise<number> {
+    let processed = 0;
+    for (let i = 0; i < limit; i++) {
+      const didProcess = await this.processNextQueueItem();
+      if (!didProcess) break;
+      processed++;
+    }
+    return processed;
   }
 }
 

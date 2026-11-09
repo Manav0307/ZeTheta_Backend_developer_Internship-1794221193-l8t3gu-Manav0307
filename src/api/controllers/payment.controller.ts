@@ -163,4 +163,55 @@ export class PaymentController {
       next(err);
     }
   }
+
+  static async transition(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+      const targetState = req.body.targetState || req.body.target_state;
+      if (!targetState) {
+        throw new BadRequestError('targetState is required', 'MISSING_TARGET_STATE');
+      }
+
+      const result = await PaymentApplicationService.transitionManualState({
+        transactionId: id,
+        targetState,
+        traceId: req.traceId
+      });
+
+      res.status(result.statusCode).json(result.body);
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  static async expire(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+      const result = await PaymentApplicationService.expirePayment({
+        transactionId: id,
+        merchantId: req.merchantId,
+        traceId: req.traceId
+      });
+
+      res.status(result.statusCode).json(result.body);
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  static async voidRemainder(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+      const result = await PaymentApplicationService.voidRemainder({
+        transactionId: id,
+        merchantId: req.merchantId,
+        traceId: req.traceId
+      });
+
+      res.status(result.statusCode).json(result.body);
+    } catch (err) {
+      next(err);
+    }
+  }
 }
+

@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:15-alpine
     container_name: zetheta-postgres
     restart: always
     environment:
@@ -33,16 +33,55 @@ services:
       PORT: 3000
       DATABASE_URL: postgres://postgres:postgrespassword@postgres:5432/zetheta_dev
       TEST_DATABASE_URL: postgres://postgres:postgrespassword@postgres:5432/zetheta_test
-      MERCHANT_API_KEY: test_api_key_zetheta_dev
-      ADMIN_API_KEY: admin_secret_key_zetheta
-      JWT_SECRET: dev_jwt_super_secret_for_orchestrator_signing_2026
-      WEBHOOK_SECRET_RAZORPAY: whsec_rzp_demo_secret_2026
-      WEBHOOK_SECRET_STRIPE: whsec_str_demo_secret_2026
-      WEBHOOK_SECRET_PAYU: whsec_payu_demo_secret_2026
-      WEBHOOK_SECRET_UPI: whsec_upi_demo_secret_2026
+      MERCHANT_API_KEY: merchant-secret-key-67890
+      ADMIN_API_KEY: admin-secret-key-12345
+      RAZORPAY_WEBHOOK_SECRET: mock-razorpay-secret
+      STRIPE_WEBHOOK_SECRET: mock-stripe-secret
+      PAYU_WEBHOOK_SECRET: mock-payu-secret
+      UPI_WEBHOOK_SECRET: mock-upi-secret
     ports:
       - "3000:3000"
 
+  webhook-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: zetheta-webhook-worker
+    command: ["npm", "run", "worker:webhooks"]
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://postgres:postgrespassword@postgres:5432/zetheta_dev
+
+  reconciliation-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: zetheta-reconciliation-worker
+    command: ["npm", "run", "worker:reconcile"]
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://postgres:postgrespassword@postgres:5432/zetheta_dev
+
+  dashboard:
+    image: nginx:alpine
+    container_name: zetheta-dashboard
+    profiles:
+      - dashboard
+    ports:
+      - "8080:80"
+    volumes:
+      - ./dashboard:/usr/share/nginx/html:ro
+    restart: unless-stopped
+
 volumes:
   pgdata:
+
 

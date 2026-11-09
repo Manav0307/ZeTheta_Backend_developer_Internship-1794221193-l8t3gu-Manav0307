@@ -59,8 +59,8 @@ async function main() {
   await adminClient.end();
   console.log('Databases verified. Postgres daemon ready.');
 
-  // Keep process alive indefinitely
-  process.stdin.resume();
+  // Keep process alive indefinitely with active timer
+  setInterval(() => {}, 1000 * 60 * 60);
 }
 
 main().catch((err) => {

@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { ZodError } from 'zod';
-import { AppError } from '../../shared/errors/index.js';
+import { AppError, InvalidStateTransitionException } from '../../shared/errors/index.js';
 import { logger } from '../../shared/logging/logger.js';
 
 export function errorMiddleware(
@@ -27,7 +27,27 @@ export function errorMiddleware(
     return;
   }
 
-  // 2. Custom AppError
+  // 2. Specific InvalidStateTransitionException handler (Part B FS-15)
+  if (err instanceof InvalidStateTransitionException) {
+    res.status(422).json({
+      error: 'INVALID_STATE_TRANSITION',
+      code: 'INVALID_STATE_TRANSITION',
+      message: err.message,
+      current: err.current,
+      requested: err.requested,
+      allowedTransitions: err.allowedTransitions,
+      details: {
+        current: err.current,
+        requested: err.requested,
+        allowedTransitions: err.allowedTransitions
+      },
+      request_id: requestId,
+      timestamp
+    });
+    return;
+  }
+
+  // 3. Custom AppError
   if (err instanceof AppError) {
     res.status(err.statusCode).json({
       error: {
@@ -40,6 +60,7 @@ export function errorMiddleware(
     });
     return;
   }
+
 
   // 3. PostgreSQL constraint violations
   if (err.code === '23505') {
