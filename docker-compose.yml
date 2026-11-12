@@ -11,14 +11,14 @@ services:
       POSTGRES_DB: zetheta_dev
     command: >
       postgres
-      -c max_connections=200
-      -c shared_buffers=256MB
-      -c effective_cache_size=512MB
+      -c max_connections=300
+      -c shared_buffers=512MB
+      -c effective_cache_size=1GB
       -c synchronous_commit=off
-      -c wal_buffers=16MB
+      -c wal_buffers=32MB
       -c checkpoint_completion_target=0.9
       -c random_page_cost=1.1
-      -c work_mem=4MB
+      -c work_mem=16MB
     ports:
       - "5432:5432"
     volumes:
@@ -62,8 +62,8 @@ services:
       DB_PORT: 5432
       DB_NAME: zetheta_dev
       POOL_MODE: transaction
-      MAX_CLIENT_CONN: 1000
-      DEFAULT_POOL_SIZE: 60
+      MAX_CLIENT_CONN: 2000
+      DEFAULT_POOL_SIZE: 100
       AUTH_TYPE: plain
     ports:
       - "6432:5432"
@@ -124,6 +124,7 @@ services:
         condition: service_started
     environment:
       NODE_ENV: production
+      RECONCILIATION_INTERVAL_MINUTES: 60
       DATABASE_URL: postgres://postgres:postgrespassword@pgbouncer:5432/zetheta_dev
       READ_REPLICA_DATABASE_URL: postgres://postgres:postgrespassword@postgres-replica:5432/zetheta_dev
 

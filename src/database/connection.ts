@@ -20,7 +20,7 @@ export function getPool(customConnectionString?: string): pg.Pool {
 
     pool = new Pool({
       connectionString,
-      max: 50,
+      max: 80,
       idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 10000,
     });

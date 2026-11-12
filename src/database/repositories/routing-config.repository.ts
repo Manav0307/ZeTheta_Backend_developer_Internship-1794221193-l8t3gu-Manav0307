@@ -2,11 +2,25 @@ import pg from 'pg';
 import { RoutingConfigRecord } from '../../shared/types/index.js';
 import { BadRequestError } from '../../shared/errors/index.js';
 
+let cachedRouting: { data: RoutingConfigRecord; expiry: number } | null = null;
+
 export class RoutingConfigRepository {
+  static clearCache(): void {
+    cachedRouting = null;
+  }
+
   static async getConfig(client: pg.PoolClient | pg.Pool): Promise<RoutingConfigRecord> {
+    const now = Date.now();
+    if (cachedRouting && cachedRouting.expiry > now) {
+      return cachedRouting.data;
+    }
     const res = await client.query<RoutingConfigRecord>(
       `SELECT * FROM routing_config WHERE id = 1`
     );
+    if (res.rows[0]) {
+      cachedRouting = { data: res.rows[0], expiry: now + 2000 };
+    }
+    cachedRouting = null;
     return res.rows[0];
   }
 
@@ -62,6 +76,7 @@ export class RoutingConfigRepository {
       ]
     );
 
+    cachedRouting = null;
     return res.rows[0];
   }
 }

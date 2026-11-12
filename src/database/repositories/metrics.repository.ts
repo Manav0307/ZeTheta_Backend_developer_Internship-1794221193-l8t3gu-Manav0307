@@ -1,7 +1,19 @@
 import pg from 'pg';
 import { PaymentMethod } from '../../shared/types/index.js';
 
+interface RollingStats {
+  total_count: number;
+  success_count: number;
+  p95_latency_ms: number;
+  error_count: number;
+}
+
+const statsCache = new Map<string, { data: RollingStats; expiry: number }>();
+
 export class MetricsRepository {
+  static clearCache(): void {
+    statsCache.clear();
+  }
   static async recordAttemptOutcome(
     client: pg.PoolClient | pg.Pool,
     gateway: string,
@@ -41,12 +53,14 @@ export class MetricsRepository {
     gateway: string,
     method: PaymentMethod,
     windowMinutes: number = 15
-  ): Promise<{
-    total_count: number;
-    success_count: number;
-    p95_latency_ms: number;
-    error_count: number;
-  }> {
+  ): Promise<RollingStats> {
+    const cacheKey = `${gateway}_${method}_${windowMinutes}`;
+    const now = Date.now();
+    const cached = statsCache.get(cacheKey);
+    if (cached && cached.expiry > now) {
+      return cached.data;
+    }
+
     const res = await client.query<{
       total: string | null;
       success: string | null;
@@ -72,12 +86,15 @@ export class MetricsRepository {
     const p95 = Math.round(Number(row?.p95 || 300));
     const errorCount = parseInt(row?.err || '0', 10);
 
-    return {
+    const result = {
       total_count: total,
       success_count: success,
       p95_latency_ms: p95,
       error_count: errorCount
     };
+
+    statsCache.set(cacheKey, { data: result, expiry: now + 1500 });
+    return result;
   }
 
   static async getSuccessRateAnalytics(

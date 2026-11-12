@@ -2,11 +2,22 @@ import pg from 'pg';
 import { GatewayConfigRecord } from '../../shared/types/index.js';
 import { NotFoundError } from '../../shared/errors/index.js';
 
+let cachedAll: { data: GatewayConfigRecord[]; expiry: number } | null = null;
+
 export class GatewayConfigRepository {
+  static clearCache(): void {
+    cachedAll = null;
+  }
+
   static async getAll(client: pg.PoolClient | pg.Pool): Promise<GatewayConfigRecord[]> {
+    const now = Date.now();
+    if (cachedAll && cachedAll.expiry > now) {
+      return cachedAll.data;
+    }
     const res = await client.query<GatewayConfigRecord>(
       `SELECT * FROM gateway_config ORDER BY gateway_name ASC`
     );
+    cachedAll = { data: res.rows, expiry: now + 2000 };
     return res.rows;
   }
 
@@ -57,6 +68,7 @@ export class GatewayConfigRepository {
       ]
     );
 
+    cachedAll = null;
     return res.rows[0];
   }
 }
