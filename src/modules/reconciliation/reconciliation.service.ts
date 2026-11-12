@@ -38,8 +38,8 @@ export class ReconciliationService {
         LEFT JOIN payment_attempts pa ON pa.transaction_id = t.id AND pa.status IN ('SENT', 'UNKNOWN', 'AUTHORISED', 'CAPTURED')
         WHERE (t.state IN ('AUTH_INITIATED', 'AUTH_TIMEOUT', 'CAPTURE_INITIATED') OR t.state = 'CAPTURED')
           AND t.created_at <= NOW() - ($1 || ' minutes')::INTERVAL
-        ORDER BY t.created_at ASC
-        LIMIT 200
+        ORDER BY t.created_at DESC
+        LIMIT 500
       `,
         [staleMinutes]
       );

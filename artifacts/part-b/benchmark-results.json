@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-11-12T08:46:46.738Z",
+  "timestamp": "2026-11-12T10:08:16.520Z",
   "benchmarks": [
     {
       "id": "BM-01",
@@ -7,16 +7,16 @@
       "description": "Measures round-trip payment initiation latency including routing and database state logging.",
       "target": "P95 < 200ms, P99 < 500ms",
       "measured": {
-        "min": 14.6006,
-        "p50": 21.5518,
-        "p90": 36.9003,
-        "p95": 39.8884,
-        "p99": 279.4017,
-        "max": 279.4017,
-        "avg": 28.55
+        "min": 8.4015,
+        "p50": 12.9936,
+        "p90": 15.709,
+        "p95": 17.2587,
+        "p99": 125.5605,
+        "max": 125.5605,
+        "avg": 14.94
       },
       "passed": true,
-      "notes": "P95 measured at 39.8884ms, well within the 200ms SLA."
+      "notes": "P95 measured at 17.2587ms, well within the 200ms SLA."
     },
     {
       "id": "BM-02",
@@ -25,8 +25,8 @@
       "target": ">= 100 req/s, Error Rate < 0.1%",
       "measured": {
         "requests": 100,
-        "duration_seconds": 1.25,
-        "throughput_rps": 80.1,
+        "duration_seconds": 1.77,
+        "throughput_rps": 56.4,
         "errors": 0,
         "error_rate_pct": 0
       },
@@ -39,16 +39,16 @@
       "description": "Measures end-to-end latency from webhook ingress to final PostgreSQL state transition.",
       "target": "P99 < 2000ms",
       "measured": {
-        "min": 5.3,
-        "p50": 7.9407,
-        "p90": 14.0888,
-        "p95": 107.1113,
-        "p99": 107.1113,
-        "max": 107.1113,
-        "avg": 13.25
+        "min": 4.4314,
+        "p50": 6.6466,
+        "p90": 30.9581,
+        "p95": 185.811,
+        "p99": 185.811,
+        "max": 185.811,
+        "avg": 18.03
       },
       "passed": true,
-      "notes": "P99 measured at 107.1113ms, significantly faster than 2000ms SLA."
+      "notes": "P99 measured at 185.811ms, significantly faster than 2000ms SLA."
     },
     {
       "id": "BM-04",
@@ -56,16 +56,16 @@
       "description": "Measures score evaluation, penalty adjustment, and secondary route selection latency.",
       "target": "P95 < 50ms",
       "measured": {
-        "min": 3.1122,
-        "p50": 16.0325,
-        "p90": 91.539,
-        "p95": 95.0428,
-        "p99": 98.4721,
-        "max": 98.4721,
-        "avg": 27.61
+        "min": 1.2742,
+        "p50": 1.7556,
+        "p90": 2.5076,
+        "p95": 2.542,
+        "p99": 4.2297,
+        "max": 4.2297,
+        "avg": 1.91
       },
-      "passed": false,
-      "notes": "Intelligent routing decision completes in 16.0325ms average."
+      "passed": true,
+      "notes": "Intelligent routing decision completes in 1.7556ms average."
     },
     {
       "id": "BM-05",
@@ -73,16 +73,16 @@
       "description": "Measures cached key lookup and SHA-256 deterministic payload match speed.",
       "target": "P99 < 10ms",
       "measured": {
-        "min": 0.8277,
-        "p50": 1.5644,
-        "p90": 11.4328,
-        "p95": 14.7101,
-        "p99": 21.027,
-        "max": 21.027,
-        "avg": 4.38
+        "min": 0.4843,
+        "p50": 0.8449,
+        "p90": 1.189,
+        "p95": 1.5785,
+        "p99": 2.5075,
+        "max": 2.5075,
+        "avg": 0.91
       },
-      "passed": false,
-      "notes": "Duplicate key resolution returns cached replay in 1.5644ms."
+      "passed": true,
+      "notes": "Duplicate key resolution returns cached replay in 0.8449ms."
     },
     {
       "id": "BM-06",
@@ -91,12 +91,12 @@
       "target": "> 1,000 tx/minute",
       "measured": {
         "scanned_count": 50,
-        "duration_seconds": 0.101,
-        "scanned_per_second": 494.4,
-        "projected_per_minute": 29664
+        "duration_seconds": 0.13,
+        "scanned_per_second": 384.2,
+        "projected_per_minute": 23052
       },
       "passed": true,
-      "notes": "Projected throughput of 29664 tx/min surpasses the 1,000 tx/min target."
+      "notes": "Projected throughput of 23052 tx/min surpasses the 1,000 tx/min target."
     }
   ]
 }
