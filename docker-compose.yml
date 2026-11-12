@@ -16,6 +16,9 @@ services:
       -c effective_cache_size=1GB
       -c synchronous_commit=off
       -c wal_buffers=32MB
+      -c checkpoint_timeout=30min
+      -c max_wal_size=2GB
+      -c min_wal_size=512MB
       -c checkpoint_completion_target=0.9
       -c random_page_cost=1.1
       -c work_mem=16MB

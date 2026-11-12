@@ -24,6 +24,7 @@ export class MetricsRepository {
     const windowStart = new Date();
     windowStart.setSeconds(0, 0); // truncate to current minute
 
+    const safeLatency = Math.max(0, Math.round(latencyMs));
     await client.query(
       `
       INSERT INTO gateway_health_metrics (
@@ -43,7 +44,7 @@ export class MetricsRepository {
         windowStart.toISOString(),
         isSuccess ? 1 : 0,
         isSuccess ? 0 : 1,
-        latencyMs
+        safeLatency
       ]
     );
   }

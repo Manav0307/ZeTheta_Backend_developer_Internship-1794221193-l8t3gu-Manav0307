@@ -1,9 +1,22 @@
 import { createApp } from './app.js';
 import { config } from './shared/config/index.js';
 import { logger } from './shared/logging/logger.js';
-import { checkDatabaseHealth } from './database/connection.js';
+import { checkDatabaseHealth, getPool } from './database/connection.js';
 
 const app = createApp();
+
+async function preWarmPool() {
+  try {
+    const pool = getPool();
+    const clients = await Promise.all(
+      Array.from({ length: 15 }, () => pool.connect())
+    );
+    clients.forEach((c) => c.release());
+    logger.info('Database connection pool pre-warmed (15 warm sockets)');
+  } catch (err: any) {
+    logger.warn({ err: err.message }, 'Pool pre-warm skipped or failed');
+  }
+}
 
 async function start() {
   const dbHealth = await checkDatabaseHealth();
@@ -12,6 +25,8 @@ async function start() {
   } else {
     logger.info({ database: dbHealth.database }, 'Database connection established successfully');
   }
+
+  await preWarmPool();
 
   const server = app.listen(config.PORT, () => {
     logger.info(`Zetheta Payment Orchestrator running on http://localhost:${config.PORT}`);

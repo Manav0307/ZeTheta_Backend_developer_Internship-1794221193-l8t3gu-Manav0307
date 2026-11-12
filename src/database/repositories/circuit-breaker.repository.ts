@@ -69,12 +69,17 @@ export class CircuitBreakerRepository {
           probe_lease_until = NULL,
           updated_at = NOW()
       WHERE gateway = $1 AND payment_method = $2
+        AND (state != 'CLOSED' OR consecutive_failures > 0 OR probe_owner IS NOT NULL)
       RETURNING *
     `,
       [gateway, method]
     );
 
-    return res.rows[0];
+    if (res.rows[0]) {
+      return res.rows[0];
+    }
+
+    return (await this.getBreaker(client, gateway, method))!;
   }
 
   static async refreshState(
