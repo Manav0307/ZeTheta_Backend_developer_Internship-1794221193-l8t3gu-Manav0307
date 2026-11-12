@@ -8,6 +8,7 @@ const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).default('info'),
   DATABASE_URL: z.string().default('postgres://postgres:postgres@localhost:54332/zetheta_dev'),
+  READ_REPLICA_DATABASE_URL: z.string().optional(),
   TEST_DATABASE_URL: z.string().default('postgres://postgres:postgres@localhost:54332/zetheta_test'),
   DB_HOST: z.string().default('localhost'),
   DB_PORT: z.string().default('54332').transform((v) => parseInt(v, 10)),

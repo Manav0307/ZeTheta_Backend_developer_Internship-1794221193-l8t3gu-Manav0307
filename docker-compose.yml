@@ -9,6 +9,16 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgrespassword
       POSTGRES_DB: zetheta_dev
+    command: >
+      postgres
+      -c max_connections=200
+      -c shared_buffers=256MB
+      -c effective_cache_size=512MB
+      -c synchronous_commit=off
+      -c wal_buffers=16MB
+      -c checkpoint_completion_target=0.9
+      -c random_page_cost=1.1
+      -c work_mem=4MB
     ports:
       - "5432:5432"
     volumes:
@@ -19,6 +29,45 @@ services:
       timeout: 5s
       retries: 5
 
+  postgres-replica:
+    image: postgres:15-alpine
+    container_name: zetheta-postgres-replica
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgrespassword
+      POSTGRES_DB: zetheta_dev
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    container_name: zetheta-pgbouncer
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB_USER: postgres
+      DB_PASSWORD: postgrespassword
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: zetheta_dev
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: 1000
+      DEFAULT_POOL_SIZE: 60
+      AUTH_TYPE: plain
+    ports:
+      - "6432:5432"
+
   api:
     build:
       context: .
@@ -28,10 +77,13 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      pgbouncer:
+        condition: service_started
     environment:
       NODE_ENV: production
       PORT: 3000
-      DATABASE_URL: postgres://postgres:postgrespassword@postgres:5432/zetheta_dev
+      DATABASE_URL: postgres://postgres:postgrespassword@pgbouncer:5432/zetheta_dev
+      READ_REPLICA_DATABASE_URL: postgres://postgres:postgrespassword@postgres-replica:5432/zetheta_dev
       TEST_DATABASE_URL: postgres://postgres:postgrespassword@postgres:5432/zetheta_test
       MERCHANT_API_KEY: merchant-secret-key-67890
       ADMIN_API_KEY: admin-secret-key-12345
@@ -47,28 +99,33 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: zetheta-webhook-worker
-    command: ["npm", "run", "worker:webhooks"]
+    command: ["node", "dist/workers/webhook.worker.js"]
     restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
+      pgbouncer:
+        condition: service_started
     environment:
       NODE_ENV: production
-      DATABASE_URL: postgres://postgres:postgrespassword@postgres:5432/zetheta_dev
+      DATABASE_URL: postgres://postgres:postgrespassword@pgbouncer:5432/zetheta_dev
 
   reconciliation-worker:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: zetheta-reconciliation-worker
-    command: ["npm", "run", "worker:reconcile"]
+    command: ["node", "dist/workers/reconciliation.worker.js"]
     restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
+      pgbouncer:
+        condition: service_started
     environment:
       NODE_ENV: production
-      DATABASE_URL: postgres://postgres:postgrespassword@postgres:5432/zetheta_dev
+      DATABASE_URL: postgres://postgres:postgrespassword@pgbouncer:5432/zetheta_dev
+      READ_REPLICA_DATABASE_URL: postgres://postgres:postgrespassword@postgres-replica:5432/zetheta_dev
 
   dashboard:
     image: nginx:alpine

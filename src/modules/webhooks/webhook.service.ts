@@ -28,7 +28,8 @@ export class WebhookService {
   static async ingestWebhook(
     gatewayName: string,
     rawBody: Buffer,
-    headers: Record<string, unknown>
+    headers: Record<string, unknown>,
+    sourceIp?: string
   ): Promise<{ acknowledged: boolean; duplicate: boolean; eventId: string }> {
     const adapter = GatewayRegistry.get(gatewayName);
     const secret = this.getSecret(gatewayName);
@@ -38,9 +39,11 @@ export class WebhookService {
     if (!verified.isValid) {
       logger.warn({
         gateway: gatewayName,
-        action: 'webhook_verification_failed',
+        action: 'security_audit_log',
+        event: 'WEBHOOK_SIGNATURE_TAMPER_DETECTED',
+        source_ip: sourceIp || 'unknown',
         error: verified.error,
-        message: 'Webhook signature verification failed'
+        message: 'Security audit: webhook signature tamper attempt rejected with source IP'
       });
       throw new UnauthorizedError(
         `Webhook signature verification failed: ${verified.error || 'invalid signature'}`,

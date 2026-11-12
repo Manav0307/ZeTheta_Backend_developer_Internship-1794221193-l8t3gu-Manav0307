@@ -15,7 +15,13 @@ export class WebhookController {
         throw new BadRequestError('Empty webhook request body', 'EMPTY_BODY');
       }
 
-      const result = await WebhookService.ingestWebhook(gateway, rawBody, req.headers);
+      const forwarded = req.headers['x-forwarded-for'];
+      const sourceIp = (typeof forwarded === 'string' ? forwarded.split(',')[0].trim() : undefined) ||
+        req.ip ||
+        req.socket?.remoteAddress ||
+        '127.0.0.1';
+
+      const result = await WebhookService.ingestWebhook(gateway, rawBody, req.headers, sourceIp);
       res.status(200).json({
         status: 'acknowledged',
         gateway,

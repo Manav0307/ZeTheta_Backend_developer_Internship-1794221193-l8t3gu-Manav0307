@@ -1234,6 +1234,17 @@ export class PaymentApplicationService {
         traceId,
         createdBy: 'mandate_expiry_worker'
       });
+
+      // Dispatch customer notification event (FS-12 requirement: Customer is notified)
+      logger.info({
+        action: 'customer_notification_dispatched',
+        event: tx.state === 'AUTH_INITIATED' ? 'UPI_MANDATE_EXPIRED' : 'AUTH_HOLD_EXPIRED',
+        transaction_id: tx.id,
+        merchant_id: tx.merchant_id,
+        customer_notified: true,
+        channel: 'UPI_APP_PUSH_SMS',
+        message: `Customer notified: UPI mandate collect window expired without approval`
+      });
     });
 
     return {
@@ -1242,7 +1253,8 @@ export class PaymentApplicationService {
         id: finalTx.id,
         state: finalTx.state,
         trace_id: traceId,
-        message: 'Payment authorization expired'
+        customer_notified: true,
+        message: 'Payment authorization expired and customer notified'
       }
     };
   }

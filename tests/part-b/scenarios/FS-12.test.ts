@@ -1,8 +1,9 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../../../src/app.js';
 import { TransactionRepository } from '../../../src/database/repositories/transaction.repository.js';
 import { withTransaction, getPool } from '../../../src/database/connection.js';
+import { logger } from '../../../src/shared/logging/logger.js';
 import { v4 as uuidv4 } from 'uuid';
 
 describe('FS-12: UPI Collect Request Expiry and Mandate Timeout', () => {
@@ -12,7 +13,9 @@ describe('FS-12: UPI Collect Request Expiry and Mandate Timeout', () => {
     // reset
   });
 
-  it('expires unapproved UPI collect mandate: transitions AUTH_INITIATED -> AUTH_EXPIRED with 0 retries', async () => {
+  it('expires unapproved UPI collect mandate: transitions AUTH_INITIATED -> AUTH_EXPIRED with 0 retries and notifies customer', async () => {
+    const loggerInfoSpy = vi.spyOn(logger, 'info');
+
     // 1. Create a UPI payment in AUTH_INITIATED state
     const orderId = `ord_fs12_${Date.now()}`;
     const traceId = uuidv4();
@@ -56,6 +59,17 @@ describe('FS-12: UPI Collect Request Expiry and Mandate Timeout', () => {
 
     expect(expireRes.status).toBe(200);
     expect(expireRes.body.state).toBe('AUTH_EXPIRED');
+    expect(expireRes.body.customer_notified).toBe(true);
+
+    // Verify customer notification event was dispatched
+    expect(loggerInfoSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'customer_notification_dispatched',
+        event: 'UPI_MANDATE_EXPIRED',
+        customer_notified: true
+      })
+    );
+    loggerInfoSpy.mockRestore();
 
     // 3. Verify database state is AUTH_EXPIRED
     const pool = getPool();

@@ -7,7 +7,7 @@ WORKDIR /app
 COPY package*.json tsconfig.json ./
 
 # Install all dependencies including devDependencies for build
-RUN npm ci
+RUN npm install
 
 # Copy application source code and migrations
 COPY src/ ./src/
@@ -26,7 +26,7 @@ ENV PORT=3000
 
 # Install production dependencies only
 COPY package*.json ./
-RUN npm ci --only=production
+RUN npm install --omit=dev
 
 # Copy compiled files and documentation
 COPY --from=builder /app/dist ./dist

@@ -22,6 +22,7 @@
     "partb:integrity": "tsx scripts/part-b-integrity.ts",
     "partb:report": "tsx scripts/part-b-report.ts",
     "partb:all": "vitest run tests/part-b/scenarios && tsx scripts/part-b-benchmarks.ts && tsx scripts/part-b-integrity.ts && tsx scripts/part-b-report.ts",
+    "test:load:k6": "k6 run performance/k6/sustained-load.js",
     "test:all": "vitest run"
 
   },

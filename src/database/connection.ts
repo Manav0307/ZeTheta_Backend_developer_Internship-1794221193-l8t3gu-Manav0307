@@ -8,6 +8,7 @@ const { Pool, types } = pg;
 types.setTypeParser(20, (val: string) => val);
 
 let pool: pg.Pool | null = null;
+let readPool: pg.Pool | null = null;
 
 export function getPool(customConnectionString?: string): pg.Pool {
   if (!pool) {
@@ -19,9 +20,9 @@ export function getPool(customConnectionString?: string): pg.Pool {
 
     pool = new Pool({
       connectionString,
-      max: 20,
+      max: 50,
       idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 5000,
+      connectionTimeoutMillis: 10000,
     });
 
     pool.on('error', (err) => {
@@ -31,10 +32,37 @@ export function getPool(customConnectionString?: string): pg.Pool {
   return pool;
 }
 
+export function getReadPool(customConnectionString?: string): pg.Pool {
+  if (!readPool) {
+    const connectionString =
+      customConnectionString ||
+      config.READ_REPLICA_DATABASE_URL ||
+      (process.env.NODE_ENV === 'test'
+        ? config.TEST_DATABASE_URL
+        : config.DATABASE_URL);
+
+    readPool = new Pool({
+      connectionString,
+      max: 10,
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 5000,
+    });
+
+    readPool.on('error', (err) => {
+      logger.error({ err }, 'Unexpected error on idle Read Replica client');
+    });
+  }
+  return readPool;
+}
+
 export async function closePool(): Promise<void> {
   if (pool) {
     await pool.end();
     pool = null;
+  }
+  if (readPool) {
+    await readPool.end();
+    readPool = null;
   }
 }
 
@@ -43,6 +71,14 @@ export async function query<R extends pg.QueryResultRow = any>(
   params?: any[]
 ): Promise<pg.QueryResult<R>> {
   const p = getPool();
+  return p.query<R>(text, params);
+}
+
+export async function readQuery<R extends pg.QueryResultRow = any>(
+  text: string,
+  params?: any[]
+): Promise<pg.QueryResult<R>> {
+  const p = getReadPool();
   return p.query<R>(text, params);
 }
 

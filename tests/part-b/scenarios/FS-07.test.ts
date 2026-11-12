@@ -32,17 +32,22 @@ describe('FS-07: Cascade Failure Across Gateways & Method-Fit Routing', () => {
     );
 
     // Request UPI routing
-    const route = await IntelligentRouter.selectRoute(pool, {
-      transactionId: txRes.rows[0].id,
-      paymentMethod: 'UPI',
-      currency: 'INR',
-      amountMinor: '100000',
-      traceId
-    });
+    const client = await pool.connect();
+    try {
+      const route = await IntelligentRouter.selectRoute(client, {
+        transactionId: txRes.rows[0].id,
+        paymentMethod: 'UPI',
+        currency: 'INR',
+        amountMinor: '100000',
+        traceId
+      });
 
-    // Must be routed to upi or payu (which support UPI). Never Stripe (which does not support UPI)
-    expect(route.selectedGateway).not.toBe('stripe');
-    expect(['upi', 'payu', 'razorpay']).toContain(route.selectedGateway);
+      // Must be routed to upi or payu (which support UPI). Never Stripe (which does not support UPI)
+      expect(route.selectedGateway).not.toBe('stripe');
+      expect(['upi', 'payu', 'razorpay']).toContain(route.selectedGateway);
+    } finally {
+      client.release();
+    }
   });
 
 
