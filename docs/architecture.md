@@ -161,3 +161,147 @@ sequenceDiagram
 - Queries gateway status APIs to safely reconcile and transition states.
 - Raises critical alarms on fatal financial discrepancies (e.g., internal `CAPTURED` vs gateway `FAILED`).
 
+
+
+---
+
+## 4. Part C — Real-World Failure Prevention
+
+This section details the architectural defense mechanisms implemented across **Part C: Case Studies & Real-World Applications (printed pages 34–40)** of `Zetheta_Backend_project.pdf`.
+
+```mermaid
+flowchart TD
+    subgraph CaseStudies ["Part C Production Safeguards"]
+        C1["C1: Double-Charge & Timeout Storms<br/>• Client UUID Idempotency<br/>• Circuit Breaker (5 timeouts)<br/>• Exponential Jitter (1s, 2s, 4s)<br/>• Async Persistent Retry Queue"]
+        C2["C2: Silent Settlement Leaks<br/>• Reversal/Dispute Webhooks<br/>• Settlement Batch Linkage<br/>• Zero Auto-Refund Invariant<br/>• Immediate Discrepancy Flagging"]
+        C3["C3: UPI Mandate Exploitation<br/>• Strict Fulfilment Gate<br/>• 5-Min Expiry Timeout<br/>• Gated on CAPTURED only<br/>• Zero Retries on Expired Collect"]
+        C4["C4: Webhook Replay Fraud<br/>• Amount Minor Matching<br/>• Currency Matching<br/>• Provider Reference Validation<br/>• Signature + Deduplication"]
+        C5["C5: Flash-Sale Pool Stampede<br/>• DB Connection Release across HTTP<br/>• Short Critical Sections<br/>• PgBouncer Transaction Pool<br/>• Fail-Fast HTTP 503 + Retry-After"]
+    end
+```
+
+---
+
+### 4.1 C1 — Diwali Sale Double-Charge Prevention & Outbound Retries (pp. 34–35)
+
+#### Incident Summary & Root Cause
+During high-concurrency flash sales, downstream payment gateways experience timeout spikes under load. Naive checkout architectures that blindly retry timeouts cause catastrophic double-charging: the customer's account is debited at Gateway 1 while an uncoordinated failover creates a second debit at Gateway 2.
+
+#### Applicable Design Patterns
+1. **Deterministic Idempotency Key Preservation:** Client UUID is preserved across retries and enforced in database via composite unique indexes (`merchant_id`, `operation`, `key`).
+2. **Circuit Breaker Fast-Failover:** Gateway circuit breaker trips `OPEN` after 5 consecutive timeouts, dynamically routing subsequent requests to healthy alternative gateways within 500ms.
+3. **Bounded Exponential Backoff with Jitter:** Retries adhere to $1\text{s}, 2\text{s}, 4\text{s} \pm 25\%$ jitter to prevent thundering-herd synchronization.
+4. **Persistent Asynchronous Retry Queue:** Retries are offloaded to `payment_retry_queue` processed via `FOR UPDATE SKIP LOCKED` background workers, preventing checkout thread blockage.
+5. **No Double-Charge Rule on Ambiguous Timeouts:** On `TIMEOUT_UNKNOWN`, the transaction transitions to `AUTH_TIMEOUT` with idempotency status marked `UNKNOWN`, and NO failover attempt is made until reconciliation confirms the outcome.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as Customer / Merchant
+    participant App as ZeTheta Orchestrator
+    participant DB as PostgreSQL
+    participant GW1 as Primary Gateway
+    participant GW2 as Secondary Gateway
+
+    User->>App: POST /payments (Idempotency-Key: UUID)
+    App->>DB: Claim Key (PROCESSING) + Advisory Lock
+    App->>DB: Release DB Connection
+    App->>GW1: POST /authorize
+    Note over GW1: Gateway Socket Drops / 30s Timeout
+    GW1--xApp: TIMEOUT_UNKNOWN
+    App->>DB: Acquire Connection
+    App->>DB: Transition state -> AUTH_TIMEOUT (Attempt: UNKNOWN)
+    App->>DB: Idempotency Status -> UNKNOWN (202 Accepted)
+    Note over App,GW2: STRICT INVARIANT: ZERO failover charge to GW2!
+    App-->>User: HTTP 202 Accepted (State: AUTH_TIMEOUT, Status Uncertain)
+```
+
+- **Repository Modules:** `src/modules/payments/retry.service.ts`, `src/modules/idempotency/index.ts`, `src/database/repositories/circuit-breaker.repository.ts`, `src/modules/payments/payment.service.ts`.
+- **Associated Part B Scenarios:** `FS-01` (primary timeout), `FS-03` (concurrent double-click), `FS-09` (multi-server duplicate).
+- **Test Evidence:** `tests/case-studies/C1-double-charge-prevention.test.ts` (5/5 PASS).
+
+---
+
+### 4.2 C2 — Silent Settlement Leak Prevention & Reconciliation (p. 36)
+
+#### Incident Summary & Root Cause
+Internal order systems often assume funds are safely received once a transaction enters `CAPTURED`. However, post-capture reversals, chargebacks, and gateway settlement file exclusions result in silent revenue leakage if not continuously reconciled against authoritative settlement reports.
+
+#### Applicable Design Patterns
+1. **Comprehensive Event Lifecycle Ingestion:** Subscribes to and safely handles `payment.reversed`, `charge.refunded`, and `dispute.created` without illegal state transitions.
+2. **Batch Membership Tracking:** Every captured transaction tracks explicit `settlement_status` (`PENDING`, `SETTLED`, `DISCREPANCY`) and links to `settlement_batches`.
+3. **Zero Automatic Refund Invariant:** Discrepancies generate high-severity anomaly records in `reconciliation_anomalies` with `auto_refund_blocked: true`, requiring human investigation rather than speculative auto-refunds.
+
+- **Repository Modules:** `src/modules/reconciliation/reconciliation.service.ts`, `src/modules/webhooks/webhook.service.ts`, `src/database/migrations/20261108000009_create_payment_retry_and_settlement_tables.ts`.
+- **Associated Part B Scenarios:** `FS-11` (missing settlement file anomaly).
+- **Test Evidence:** `tests/case-studies/C2-settlement-reconciliation.test.ts` (3/3 PASS).
+
+---
+
+### 4.3 C3 — UPI Mandate Exploitation Prevention & Fulfilment Gate (p. 37)
+
+#### Incident Summary & Root Cause
+In UPI collect requests, payments start in an asynchronous pending state (`AUTH_INITIATED`) waiting for customer app authorization. Attackers exploit naive systems that begin order dispatch upon collect initiation, walking away with goods while allowing the mandate to expire unpaid.
+
+#### Applicable Design Patterns
+1. **Strict Fulfilment Gating Invariant:** Order fulfilment is legally permitted *only* after `CAPTURED` or `SETTLED`. All calls to `FulfilmentGateService.canFulfil()` throw `FULFILMENT_NOT_PERMITTED` if the transaction is in `AUTH_INITIATED`, `AUTHORISED`, or `AUTH_EXPIRED`.
+2. **Authoritative Expiration Window:** UPI collect mandates expire strictly after 5 minutes via `expirePayment()`, transitioning to `AUTH_EXPIRED`, notifying the customer via push/SMS, and permitting zero retries.
+3. **Idempotent Fulfilment Notification:** Confirmed capture events emit `fulfilment.allowed` exactly once; duplicate notifications are suppressed.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Customer as Customer UPI App
+    participant Orchestrator as ZeTheta Platform
+    participant Fulfilment as Order Fulfilment Engine
+    participant DB as PostgreSQL
+
+    Customer->>Orchestrator: Collect Initiated (AUTH_INITIATED)
+    Orchestrator->>Fulfilment: Query Fulfilment Gate
+    Note over Fulfilment: State is AUTH_INITIATED
+    Fulfilment-->>Orchestrator: BLOCKED (422 FULFILMENT_NOT_PERMITTED)
+    Note over Customer,Orchestrator: 5-minute timeout window elapses without approval
+    Orchestrator->>DB: Transition -> AUTH_EXPIRED
+    Orchestrator->>Customer: Customer Notified: Mandate Expired
+    Orchestrator->>Fulfilment: Query Fulfilment Gate
+    Fulfilment-->>Orchestrator: BLOCKED (State: AUTH_EXPIRED, 0 Fulfilment)
+```
+
+- **Repository Modules:** `src/modules/fulfilment/fulfilment-gate.service.ts`, `src/modules/payments/payment.service.ts` (`expirePayment`).
+- **Associated Part B Scenarios:** `FS-12` (UPI expiry customer notification).
+- **Test Evidence:** `tests/case-studies/C3-upi-fulfilment-gate.test.ts` (3/3 PASS).
+
+---
+
+### 4.4 C4 — Webhook Replay Fraud Prevention (p. 38)
+
+#### Incident Summary & Root Cause
+Attackers obtain a validly signed webhook payload for a ₹10 transaction and replay it against an unrelated high-value ₹50,000 order. Because the HMAC signature is mathematically valid, systems that verify only cryptographic signatures mark the ₹50,000 order paid.
+
+#### Applicable Design Patterns
+1. **Deep Payload Semantic Validation:** Beyond raw HMAC verification, `WebhookService` validates:
+   - **Amount Minor Match:** Incoming amount (converted to minor integer units) must exactly equal `transaction.amount_minor`.
+   - **Currency Match:** Normalized payload currency must match `transaction.currency`.
+   - **Provider Reference Match:** Gateway payment ID must correlate to the specific active attempt.
+2. **Immediate Rejection & Security Audit:** Any discrepancy logs a `WEBHOOK_AMOUNT_MISMATCH` or `WEBHOOK_CURRENCY_MISMATCH` audit warning and halts state transition.
+3. **Atomic Deduplication:** Uses `(gateway, event_id)` locking in `processed_webhook_events` to reject replay attempts without second effects.
+
+- **Repository Modules:** `src/modules/webhooks/webhook.service.ts`, `src/api/controllers/webhook.controller.ts`.
+- **Associated Part B Scenarios:** `FS-02` (duplicate webhook deduplication), `FS-10` (signature tamper rejection & source IP logging).
+- **Test Evidence:** `tests/case-studies/C4-webhook-replay-fraud.test.ts` (3/3 PASS).
+
+---
+
+### 4.5 C5 — Flash-Sale Connection-Pool Stampede (pp. 39–40)
+
+#### Incident Summary & Root Cause
+Holding relational database connections open while awaiting external HTTP gateway responses causes connection pool starvation within seconds during traffic bursts. Blocked requests cascade into server deadlocks, recursive DB error logging, and total outage.
+
+#### Applicable Design Patterns
+1. **Connection Decoupling:** ZeTheta strictly enforces the **acquire/read/release → external gateway HTTP call → acquire/write/release** paradigm. No database client is checked out while waiting on gateway latency.
+2. **Fail-Fast HTTP 503:** On pool exhaustion (`too_many_connections` or acquisition timeout), `error.middleware.ts` intercepts the exception and immediately returns `503 Service Unavailable` with `Retry-After: 5`, completely bypassing database logging.
+3. **High-Performance Architecture:** Employs PgBouncer in transaction mode (`max_client_conn = 2000`) and read-replica segregation for heavy analytics queries.
+
+- **Repository Modules:** `src/modules/payments/payment.service.ts`, `src/api/middleware/error.middleware.ts`, `src/database/connection.ts`, `docker-compose.yml`.
+- **Associated Part B Scenarios:** `FS-14` (connection pool exhaustion & backpressure).
+- **Test Evidence:** `tests/case-studies/C5-connection-pool-stampede.test.ts` (2/2 PASS).

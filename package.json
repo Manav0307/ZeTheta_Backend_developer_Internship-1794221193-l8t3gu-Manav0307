@@ -18,6 +18,7 @@
     "test:integration": "vitest run tests/integration",
     "test:e2e": "vitest run tests/e2e",
     "test:partb": "vitest run tests/part-b/scenarios",
+    "test:partc": "vitest run tests/case-studies",
     "partb:bench": "tsx scripts/part-b-benchmarks.ts",
     "partb:integrity": "tsx scripts/part-b-integrity.ts",
     "partb:report": "tsx scripts/part-b-report.ts",

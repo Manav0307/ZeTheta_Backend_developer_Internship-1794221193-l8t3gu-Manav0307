@@ -7,6 +7,7 @@ import { PaymentAttemptRepository } from '../../database/repositories/attempt.re
 import { BadRequestError, NotFoundError, UnauthorizedError } from '../../shared/errors/index.js';
 import { logger } from '../../shared/logging/logger.js';
 import { config } from '../../shared/config/index.js';
+import { FulfilmentGateService } from '../fulfilment/fulfilment-gate.service.js';
 
 
 export class WebhookService {
@@ -199,11 +200,112 @@ export class WebhookService {
         if (txId) {
           const tx = await TransactionRepository.lockForUpdate(client, txId);
 
+          // C4 Requirement (PDF-C p.38): Verify amount and currency on incoming webhook
+          // Even if signature is valid, a webhook for ₹10 must never be applied to a ₹50,000 order!
+          const rawAmount =
+            payload.payload?.payment?.entity?.amount ??
+            payload.data?.object?.amount ??
+            payload.amount ??
+            payload.amount_minor;
+
+          const rawCurrency =
+            payload.payload?.payment?.entity?.currency ??
+            payload.data?.object?.currency ??
+            payload.currency;
+
+          if (rawAmount !== undefined && rawAmount !== null) {
+            let incomingAmountMinor = String(rawAmount);
+            // Handle major currency unit strings with decimals (e.g. PayU '350.00' => 35000 minor units)
+            if (typeof rawAmount === 'string' && rawAmount.includes('.')) {
+              incomingAmountMinor = Math.round(parseFloat(rawAmount) * 100).toString();
+            }
+
+            if (incomingAmountMinor !== tx.amount_minor) {
+              logger.warn({
+                action: 'security_audit_log',
+                event: 'WEBHOOK_AMOUNT_MISMATCH',
+                transaction_id: tx.id,
+                gateway,
+                expected_amount_minor: tx.amount_minor,
+                received_amount_minor: incomingAmountMinor,
+                message: 'Security audit: webhook amount mismatch detected and rejected (C4 replay fraud guard)'
+              });
+              throw new BadRequestError(
+                `Webhook payload amount (${incomingAmountMinor}) does not match expected transaction amount (${tx.amount_minor})`,
+                'WEBHOOK_AMOUNT_MISMATCH'
+              );
+            }
+          }
+
+          if (rawCurrency && String(rawCurrency).toUpperCase() !== String(tx.currency).toUpperCase()) {
+            logger.warn({
+              action: 'security_audit_log',
+              event: 'WEBHOOK_CURRENCY_MISMATCH',
+              transaction_id: tx.id,
+              gateway,
+              expected_currency: tx.currency,
+              received_currency: rawCurrency,
+              message: 'Security audit: webhook currency mismatch detected and rejected (C4 replay fraud guard)'
+            });
+            throw new BadRequestError(
+              `Webhook payload currency (${rawCurrency}) does not match expected transaction currency (${tx.currency})`,
+              'WEBHOOK_CURRENCY_MISMATCH'
+            );
+          }
+
           // Apply state transition if admissible
           const eventType = String(payload.event || payload.type || queueItem.event_id || '').toLowerCase();
           const payloadStatus = String(payload.status || payload.payload?.payment?.entity?.status || payload.data?.object?.status || '').toLowerCase();
 
+          // C2 Requirement (PDF-C p.36): Handle payment reversals and disputes
           if (
+            eventType.includes('refund') ||
+            eventType.includes('reversed') ||
+            payloadStatus === 'refunded' ||
+            payloadStatus === 'reversed'
+          ) {
+            if (tx.state === 'CAPTURED' || tx.state === 'SETTLED') {
+              await TransactionRepository.transitionState(client, {
+                transactionId: tx.id,
+                toState: 'REFUND_INITIATED',
+                event: 'BEGIN_REFUND',
+                traceId: tx.trace_id,
+                createdBy: 'webhook_worker',
+                attemptId: attId
+              });
+              await TransactionRepository.transitionState(client, {
+                transactionId: tx.id,
+                toState: 'REFUNDED',
+                event: 'FULL_REFUND_DONE',
+                traceId: tx.trace_id,
+                createdBy: 'webhook_worker',
+                attemptId: attId,
+                refunded_minor: tx.amount_minor
+              });
+            }
+          } else if (eventType.includes('dispute')) {
+            // C2: Flag dispute anomaly immediately without automatic refund (FS-11 / C2)
+            await client.query(
+              `
+              INSERT INTO reconciliation_anomalies (
+                transaction_id, severity, status, anomaly_type, description, trace_id
+              ) VALUES ($1, 'HIGH', 'OPEN', 'WEBHOOK_DISPUTE_RAISED', $2, $3)
+              `,
+              [
+                tx.id,
+                `Gateway ${gateway} webhook reported dispute: ${eventType}. Auto-refund blocked pending investigation.`,
+                tx.trace_id
+              ]
+            );
+            logger.warn({
+              action: 'webhook_dispute_flagged',
+              transaction_id: tx.id,
+              gateway,
+              event: eventType,
+              auto_refund_blocked: true,
+              message: 'Dispute webhook received: flagged anomaly record without auto-refund'
+            });
+          } else if (
             (payloadStatus === 'captured' || payloadStatus === 'succeeded' || payloadStatus === 'success' || eventType.includes('capture') || eventType.includes('succeeded')) &&
             (tx.state === 'AUTHORISED' || tx.state === 'CAPTURE_INITIATED' || tx.state === 'AUTH_INITIATED')
           ) {
@@ -219,12 +321,35 @@ export class WebhookService {
               captured_minor: tx.amount_minor
             });
 
-
+            // C3: Unlock order fulfilment upon confirmed CAPTURED state
+            await FulfilmentGateService.triggerFulfilment(tx.id, client).catch((err) => {
+              logger.warn({ err, transaction_id: tx.id }, 'Fulfilment dispatch warning');
+            });
 
             if (attId) {
               await PaymentAttemptRepository.updateStatus(client, {
                 attempt_id: attId,
                 status: 'CAPTURED'
+              });
+            }
+          } else if (
+            (payloadStatus === 'failed' || eventType.includes('failed')) &&
+            tx.state === 'AUTH_INITIATED'
+          ) {
+            await TransactionRepository.transitionState(client, {
+              transactionId: tx.id,
+              toState: 'FAILED',
+              event: 'AUTH_FAILED',
+              traceId: tx.trace_id,
+              createdBy: 'webhook_worker',
+              attemptId: attId,
+              gatewayResponse: payload
+            });
+            if (attId) {
+              await PaymentAttemptRepository.updateStatus(client, {
+                attempt_id: attId,
+                status: 'FAILED',
+                error_class: 'HARD_DECLINE'
               });
             }
           } else if (

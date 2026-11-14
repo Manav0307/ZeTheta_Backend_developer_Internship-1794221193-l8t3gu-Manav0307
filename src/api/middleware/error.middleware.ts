@@ -61,6 +61,25 @@ export function errorMiddleware(
     return;
   }
 
+  // 4. PostgreSQL connection pool exhaustion / 503 Fail-Fast (C5 requirement, PDF-C pp.39-40)
+  if (
+    err.code === '53300' ||
+    (err.message && /timeout exceeded (when trying to connect|waiting for client)/i.test(err.message)) ||
+    (err.message && /connection pool exhausted/i.test(err.message))
+  ) {
+    res.setHeader('Retry-After', '5');
+    res.status(503).json({
+      error: {
+        code: 'SERVICE_UNAVAILABLE',
+        message: 'Database connection pool exhausted. Please retry shortly.',
+        details: {},
+        request_id: requestId,
+        timestamp
+      }
+    });
+    return;
+  }
+
 
   // 3. PostgreSQL constraint violations
   if (err.code === '23505') {

@@ -130,14 +130,23 @@ Once started, visit **`http://localhost:3000/docs`** for interactive Swagger API
 The platform includes a test suite covering unit logic, database triggers, state machine transitions, webhook pipelines, failover safety, reconciliation, API contracts, and high-contention concurrency:
 
 ```bash
-# Run all 64 automated tests
+# Run all automated tests (99 tests across unit, integration, e2e, Part B, and Part C)
 npm run test:all
+
+# Run Part C case-study tests (C1 through C5)
+npm run test:partc
+
+# Run Part B scenario tests (FS-01 through FS-15)
+npm run test:partb
+
+# Run Financial and State Machine integrity audit (10 invariant checks)
+npm run partb:integrity
 ```
 
 ### Verified Test Summary
 ```
-Test Files:  13 passed (13)
-Tests:       64 passed (64)
+Test Files:  33 passed (33)
+Tests:       99 passed (99)
 Pass Rate:   100%
 Exit Code:   0
 ```
@@ -146,6 +155,8 @@ Exit Code:   0
 - **Integration Tests (19 tests):** Database schema & immutability triggers, payment authorization/capture/refund lifecycle, safe zero-loss failover, webhook pipeline leasing, reconciliation anomaly detection.
 - **E2E Contract Tests (24 tests):** Full HTTP validation across all 23 prescribed endpoints.
 - **Concurrency & Contention Tests (3 tests):** 25 simultaneous concurrent requests bearing the identical idempotency key; idempotency key tampering rejection; race condition resistance on simultaneous partial captures.
+- **Part B Failure Scenarios (19 tests):** FS-01 through FS-15 covering failover, signature tampering, pool exhaustion, out-of-order webhooks, and UPI mandate timeouts.
+- **Part C Real-World Case Studies (16 tests):** C1 (Diwali sale double-charge & jittered retry queue), C2 (silent settlement leak & dispute handling), C3 (UPI mandate fulfilment gate), C4 (webhook replay fraud & amount minor verification), C5 (connection pool stampede & fail-fast 503).
 
 ---
 
@@ -176,6 +187,11 @@ Comprehensive engineering documents are located in the `docs/` directory:
 - [Test Execution Report](file:///docs/test-results.md) — Detailed breakdown of test suites and verified invariants.
 - [Operational Limitations](file:///docs/limitations.md) — Mock/sandbox disclosures and non-production regulatory boundaries.
 - [OpenAPI Specification](file:///docs/openapi.yaml) — Complete OpenAPI 3.0 schema for all 23 REST endpoints.
+- [Part C Architecture — Real-World Failure Prevention](file:///docs/architecture.md#4-part-c--real-world-failure-prevention) — Architecture defense patterns, flow diagrams, and guarantees for C1–C5.
+- [Part C Coverage Matrix](file:///docs/part-c-coverage-matrix.md) — Requirement-to-code mapping and remediation evidence.
+- [Part C Test Report](file:///docs/part-c-test-report.md) — Complete execution evidence for C1–C5 and FS-01..FS-15.
+- [Part C Change Log](file:///docs/part-c-change-log.md) — File-level edits, schema migrations, and security implications.
+- [Technical Errors Found (Bonus C6)](file:///docs/errors-found.md) — Identification and proof of 5 technical errors in the assignment PDF.
 
 ---
 

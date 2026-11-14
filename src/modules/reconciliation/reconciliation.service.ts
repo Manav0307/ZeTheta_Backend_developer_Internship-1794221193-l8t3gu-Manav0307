@@ -411,6 +411,12 @@ export class ReconciliationService {
                 'reconciliation_engine'
               ]
             );
+
+            // C2: Mark transaction settlement status as DISCREPANCY
+            await client.query(
+              `UPDATE transactions SET settlement_status = 'DISCREPANCY' WHERE id = $1`,
+              [currentTx.id]
+            );
           });
 
           logger.warn({
@@ -451,6 +457,12 @@ export class ReconciliationService {
                 'SETTLED',
                 traceId
               ]
+            );
+
+            // C2: Mark transaction settlement status as SETTLED
+            await client.query(
+              `UPDATE transactions SET settlement_status = 'SETTLED' WHERE id = $1`,
+              [currentTx.id]
             );
           });
         }
